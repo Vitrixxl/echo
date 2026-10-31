@@ -1,0 +1,20 @@
+# Deployed by pihost on the Pi (pihost add <repo> echo): Caddy serves this on https://echo.vitrixxl.fr.
+# DEPLOY_TOKEN (uploads from scripts/deploy.ts) lives in .env, edited with `pihost env echo`.
+services:
+  api:
+    build: ./server
+    expose: ["8787"]
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      TRUST_PROXY: "1"
+    volumes:
+      - data:/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8787/count"]
+      interval: 30s
+      timeout: 5s
+volumes:
+  data:

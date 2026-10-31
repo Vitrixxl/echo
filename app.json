@@ -1,0 +1,44 @@
+{
+  "expo": {
+    "name": "Écho",
+    "slug": "echo-alerte",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "dark",
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "org.echoalerte.app"
+    },
+    "android": {
+      "adaptiveIcon": {
+        "backgroundColor": "#E5484D",
+        "foregroundImage": "./assets/android-icon-foreground.png",
+        "backgroundImage": "./assets/android-icon-background.png",
+        "monochromeImage": "./assets/android-icon-monochrome.png"
+      },
+      "predictiveBackGestureEnabled": false,
+      "package": "org.echoalerte.app"
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "plugins": [
+      [
+        "expo-nearby-connections",
+        {
+          "bonjourServicesName": "echo-alerte",
+          "localNetworkUsagePermissionText": "Écho relaie les alertes avec les téléphones proches, même sans réseau.",
+          "bluetoothUsagePermissionText": "Écho utilise le Bluetooth pour relayer les alertes sans réseau."
+        }
+      ],
+      [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "Écho utilise ta position pour placer les alertes et (si tu es medic) te montrer sur la carte."
+        }
+      ],
+      "@maplibre/maplibre-react-native"
+    ]
+  }
+}

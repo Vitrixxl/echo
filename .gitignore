@@ -1,0 +1,53 @@
+# Learn more https://docs.github.com/en/get-started/getting-started-with-git/ignoring-files
+
+# dependencies
+node_modules/
+
+# Expo
+.expo/
+dist/
+web-build/
+expo-env.d.ts
+
+# Native
+.kotlin/
+*.orig.*
+*.jks
+*.p8
+*.p12
+*.key
+*.mobileprovision
+
+# Metro
+.metro-health-check*
+
+# debug
+npm-debug.*
+yarn-debug.*
+yarn-error.*
+
+# macOS
+.DS_Store
+*.pem
+
+# local env files
+.env*.local
+
+# typescript
+*.tsbuildinfo
+
+# generated native folders
+/ios
+/android
+promo/.tts_cache/
+server/data/
+
+# Écho
+promo/tts/.venv-*/
+promo/tts/__pycache__/
+promo/tts/samples/
+*.mp4
+modules/*/android/build/
+__pycache__/
+# the update-signing CERTIFICATE is public and must ship with the app (the private key stays in ~/.config/echo)
+!certs/certificate.pem
