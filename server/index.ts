@@ -147,9 +147,8 @@ h1 span{color:#E5484D}
 .android{background:#E5484D;color:#fff}
 .off{background:#171A21;color:#5E636B}
 .off small{font-weight:700;font-size:13px}
-.info{color:#9BA1A6;font-size:14px;line-height:1.55;margin:18px 2px 0}
-footer{color:#5E636B;font-size:13px;line-height:1.6;border-top:1px solid #262A33;padding-top:16px}
-footer a{color:#9BA1A6}
+footer{text-align:center;font-size:14px}
+footer a{color:#9BA1A6;text-decoration:none}
 </style></head><body><main>
 <div class="brand">${LOGO} Écho</div>
 <div class="hero">
@@ -159,10 +158,8 @@ ${hasApk
   ? `<a class="b android" href="/download">${ANDROID} TÉLÉCHARGER POUR ANDROID</a>`
   : `<div class="b off" aria-disabled="true">${ANDROID} ANDROID <small>bientôt</small></div>`}
 <div class="b off" aria-disabled="true">${APPLE} IPHONE <small>bientôt</small></div>
-<p class="info">L'alerte ne passe que par les téléphones à proximité qui ont l'application. Plus elle est installée, plus elle porte loin.${n > 0 ? ` ${n.toLocaleString('fr-FR')} installation${n > 1 ? 's' : ''}.` : ''}</p>
 </div>
-<footer>Gratuit, sans compte. Votre position n'est partagée qu'en cas d'alerte, ou en continu si vous êtes medic.<br>
-Android : autorisez l'installation depuis votre navigateur après le téléchargement. Code source : <a href="https://github.com/Vitrixxl/echo">github.com/Vitrixxl/echo</a></footer>
+<footer><a href="https://github.com/Vitrixxl/echo">Code source sur GitHub</a></footer>
 </main></body></html>`;
 
 if (import.meta.main) {
