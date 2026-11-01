@@ -4,6 +4,7 @@
  *   bun scripts/deploy.ts               server + over-the-air update
  *   bun scripts/deploy.ts --apk         also build the APK and publish it on the download page
  *   bun scripts/deploy.ts --update-only only the over-the-air update (server untouched)
+ *   --light                             low memory: one worker, small JVM heap, no Gradle daemon (slower)
  *
  * Over-the-air update: `expo export` gives the JavaScript bundle and assets; the manifest is written and
  * signed HERE with the key in ~/.config/echo/keys/expo-updates (never on the server), then the server stores
@@ -26,6 +27,7 @@ const ORIGIN = (process.env.EXPO_PUBLIC_STATS_URL ?? 'https://echo.vitrixxl.fr')
 const KEY = process.env.ECHO_UPDATES_SIGNING_KEY ?? join(homedir(), '.config/echo/keys/expo-updates/private-key.pem');
 const apk = process.argv.includes('--apk');
 const updateOnly = process.argv.includes('--update-only');
+const light = process.argv.includes('--light');
 const OUT = resolve(root, 'dist/update');
 
 const run = (cmd: string, args: string[], opts: { capture?: boolean; cwd?: string; env?: NodeJS.ProcessEnv } = {}) => {
@@ -60,7 +62,7 @@ const put = async (path: string, body: BodyInit, type = 'application/octet-strea
 // 2. Over-the-air update
 const runtime = JSON.parse(run('bunx', ['expo-updates', 'runtimeversion:resolve', '--platform', 'android'], { capture: true })).runtimeVersion as string;
 rmSync(OUT, { recursive: true, force: true });
-run('bunx', ['expo', 'export', '--clear', '--platform', 'android', '--output-dir', OUT], { env: { ...process.env, NODE_ENV: 'production' } });
+run('bunx', ['expo', 'export', '--clear', '--platform', 'android', '--output-dir', OUT, ...(light ? ['--max-workers', '1'] : [])], { env: { ...process.env, NODE_ENV: 'production' } });
 const expoClient = JSON.parse(run('bunx', ['expo', 'config', '--type', 'public', '--json'], { capture: true }));
 const TYPES: Record<string, string> = { hbc: 'application/javascript', js: 'application/javascript', json: 'application/json', ttf: 'font/ttf', otf: 'font/otf', png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', webp: 'image/webp', svg: 'image/svg+xml' };
 const meta = JSON.parse(readFileSync(join(OUT, 'metadata.json'), 'utf8')).fileMetadata.android as { bundle: string; assets: { path: string; ext: string }[] };
@@ -91,7 +93,7 @@ if (apk) {
   const android = join(root, 'android');
   run('bunx', ['expo', 'prebuild', '--platform', 'android', '--no-install'], { env: { ...process.env, CI: '1' } });
   const env = { ...process.env, JAVA_HOME: process.env.JAVA_HOME ?? join(homedir(), '.local/share/jdk17'), ANDROID_HOME: process.env.ANDROID_HOME ?? join(homedir(), 'Android/Sdk') };
-  run('./gradlew', ['assembleRelease', '-PreactNativeArchitectures=arm64-v8a', '-q'], { cwd: android, env });
+  run('./gradlew', ['assembleRelease', '-PreactNativeArchitectures=arm64-v8a', '-q', ...(light ? ['--no-daemon', '--max-workers=1', '-Dorg.gradle.jvmargs=-Xmx1g -XX:MaxMetaspaceSize=384m', '-Pkotlin.compiler.execution.strategy=in-process'] : [])], { cwd: android, env });
   spawnSync('./gradlew', ['--stop'], { cwd: android }); // the daemon keeps gigabytes of RAM otherwise
   await put('/apk', readFileSync(join(android, 'app/build/outputs/apk/release/app-release.apk')), 'application/vnd.android.package-archive');
   console.log(`APK published: ${ORIGIN}/download`);
