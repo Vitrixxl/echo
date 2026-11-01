@@ -483,6 +483,7 @@ SCRIPT = [
     (HEAD, sc_share, [
         ("Faites passer le message.", None, None),
         ("Le lien pour la télécharger est dans la *bio*.", None, None),
+        ("Et partagez cette vidéo à toutes les personnes que vous connaissez qui iront en *manif*.", None, None),
     ]),
 ]
 END_CARD = 2.4
