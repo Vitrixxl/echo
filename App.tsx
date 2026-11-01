@@ -21,6 +21,8 @@ const C = {
   bg: '#0F1115', card: '#171A21', line: '#262A33', text: '#F2F4F7', muted: '#9BA1A6',
   red: '#E5484D', orange: '#F5A524', green: '#30A46C', blue: '#3E8EF7',
 };
+// One dim for every overlay: dark enough that the white map doesn't wash through.
+const DIM = C.bg + 'D9';
 const TAGS = ['Blessure', 'Saignement', 'Gaz lacrymo', 'Malaise', 'Inconscient', 'Brûlure'];
 
 type Role = 'medic' | 'civil';
@@ -46,10 +48,16 @@ export default function App() {
     });
   };
 
+  const pickRole = (r: Role) => r === 'civil' ? setRole(r) : setDialog({
+    title: 'Réservé aux personnes formées',
+    body: "Ne te déclare medic que si tu as une formation de secouriste ou de street medic. Les blessés compteront sur toi : un mauvais geste peut aggraver une blessure, et les autres medics peuvent ne pas venir s'ils te voient en route.\n\nEn medic, ta position est visible en continu par tous ceux qui ont l'application, y compris des personnes hostiles.",
+    actions: [{ label: 'Retour' }, { label: 'Je suis formé·e', color: C.green, onPress: () => setRole('medic') }],
+  });
+
   const screen =
     city === undefined ? <View style={{ flex: 1, backgroundColor: C.bg }} /> :
     !city && !skipped ? <CityPicker onDone={firstCity} /> :
-    !role ? <RoleScreen onPick={setRole} /> :
+    !role ? <RoleScreen onPick={pickRole} /> :
     <MapScreen role={role} city={city} onSwitch={() => setRole(null)} />;
   return (
     <SafeAreaProvider>
@@ -101,9 +109,9 @@ function CityPicker({ onDone, onClose }: { onDone: (c: City | null) => void; onC
     <View style={[s.role, { paddingTop: insets.top + (onClose ? 24 : 48), paddingBottom: insets.bottom + 16 }]}>
       <StatusBar style="light" />
       <View style={s.row}>
-        <Text style={[s.h1, { marginTop: 0, flex: 1, fontSize: 30 }]}>Où vas-tu manifester ?</Text>
+        <Text style={[s.h1, { marginTop: 0, flex: 1 }]}>Où vas-tu manifester ?</Text>
         {onClose && !dl && (
-          <Pressable onPress={onClose} hitSlop={16} style={s.closeBtn} accessibilityLabel="Fermer">
+          <Pressable onPress={onClose} hitSlop={16} style={({ pressed }) => [s.closeBtn, pressed && s.pressed]} accessibilityLabel="Fermer">
             <Ionicons name="close" size={22} color={C.text} />
           </Pressable>
         )}
@@ -120,13 +128,11 @@ function CityPicker({ onDone, onClose }: { onDone: (c: City | null) => void; onC
           <View style={[s.row, { marginTop: 28 }]}>
             <TextInput value={q} onChangeText={setQ} onSubmitEditing={search} returnKeyType="search" autoFocus={!onClose}
               placeholder="Ville en France (ex : Lyon)" placeholderTextColor={C.muted} style={[s.input, { flex: 1, marginTop: 0 }]} />
-            <Pressable onPress={search} style={[s.btn, s.iconBtn, { height: 48 }]} accessibilityLabel="Chercher">
-              {busy ? <ActivityIndicator color="#fff" /> : <Ionicons name="search" size={22} color="#fff" />}
-            </Pressable>
+            <Btn icon="search" a11y="Chercher" color={C.blue} busy={busy} onPress={search} />
           </View>
           <ScrollView style={{ marginTop: 16 }} keyboardShouldPersistTaps="handled">
             {results?.map((c) => (
-              <Pressable key={c.label} onPress={() => pick(c)} style={({ pressed }) => [s.roleCard, pressed && { opacity: 0.8 }]}>
+              <Pressable key={c.label} onPress={() => pick(c)} style={({ pressed }) => [s.roleCard, pressed && s.pressed]}>
                 <Ionicons name="location" size={22} color={C.red} />
                 <View style={{ flex: 1 }}>
                   <Text style={s.roleTitle}>{c.name}</Text>
@@ -155,7 +161,7 @@ function Overlay({ onBack, children }: { onBack: () => void; children: ReactNode
     const sub = BackHandler.addEventListener('hardwareBackPress', () => { onBack(); return true; });
     return () => sub.remove();
   }, [onBack]);
-  return <View style={StyleSheet.absoluteFill}>{children}</View>;
+  return <View style={[StyleSheet.absoluteFill, { backgroundColor: DIM }]}><StatusBar style="light" />{children}</View>;
 }
 
 function DialogModal({ dialog, onClose }: { dialog: Dialog | null; onClose: () => void }) {
@@ -187,7 +193,7 @@ function RoleScreen({ onPick }: { onPick: (r: Role) => void }) {
       <Text style={s.sub}>Les alertes passent de téléphone en téléphone, même sans réseau. Plus on est nombreux, plus ça porte loin.</Text>
       <View style={{ flex: 1 }} />
       <RoleCard icon="medkit" color={C.green} title="Je suis street medic"
-        body="Ta position est visible par tout le monde sur la carte." onPress={() => onPick('medic')} />
+        body="Formation aux premiers secours requise. Ta position est visible par tout le monde." onPress={() => onPick('medic')} />
       <RoleCard icon="person" color={C.blue} title="Je ne suis pas medic"
         body="Tu peux appeler un medic. Ta position n'est partagée que si tu lances une alerte." onPress={() => onPick('civil')} />
     </View>
@@ -196,7 +202,7 @@ function RoleScreen({ onPick }: { onPick: (r: Role) => void }) {
 
 function RoleCard(p: { icon: any; color: string; title: string; body: string; onPress: () => void }) {
   return (
-    <Pressable onPress={p.onPress} style={({ pressed }) => [s.roleCard, pressed && { opacity: 0.8 }]} accessibilityRole="button">
+    <Pressable onPress={p.onPress} style={({ pressed }) => [s.roleCard, pressed && s.pressed]} accessibilityRole="button">
       <View style={[s.roleIcon, { backgroundColor: p.color }]}><Ionicons name={p.icon} size={24} color="#fff" /></View>
       <View style={{ flex: 1 }}>
         <Text style={s.roleTitle}>{p.title}</Text>
@@ -451,7 +457,7 @@ function MapScreen({ role, city, onSwitch }: { role: Role; city: City | null; on
 
       {/* Top status bar */}
       <View style={[s.top, { top: insets.top + 8 }]} pointerEvents="box-none">
-        <Pressable style={s.pill} onPress={onSwitch} accessibilityLabel="Changer de rôle">
+        <Pressable style={({ pressed }) => [s.pill, pressed && s.pressed]} onPress={onSwitch} accessibilityLabel="Changer de rôle">
           <View style={[s.dot, { backgroundColor: role === 'medic' ? C.green : C.blue }]} />
           <Text style={s.pillText}>{role === 'medic' ? 'Medic' : 'Civil'}</Text>
         </Pressable>
@@ -465,7 +471,7 @@ function MapScreen({ role, city, onSwitch }: { role: Role; city: City | null; on
           <Ionicons name="alert-circle" size={15} color={sos.length ? C.red : C.muted} />
           <Text style={s.pillText}>{sos.length}</Text>
         </View>
-        <Pressable style={s.round} onPress={() => setCityOpen(true)} accessibilityLabel="Télécharger la carte d'une ville">
+        <Pressable style={({ pressed }) => [s.round, pressed && s.pressed]} onPress={() => setCityOpen(true)} accessibilityLabel="Télécharger la carte d'une ville">
           <Ionicons name="cloud-download-outline" size={20} color={C.text} />
         </Pressable>
       </View>
@@ -491,7 +497,7 @@ function MapScreen({ role, city, onSwitch }: { role: Role; city: City | null; on
 
       {/* Bottom: featured alert card + SOS button (always reachable) */}
       <View style={[s.bottom, { paddingBottom: insets.bottom + 16 }]} pointerEvents="box-none">
-        <Pressable style={[s.round, { alignSelf: 'flex-end', marginBottom: 12 }]} accessibilityLabel="Me recentrer" onPress={locate}>
+        <Pressable style={({ pressed }) => [s.round, { alignSelf: 'flex-end', marginBottom: 12 }, pressed && s.pressed]} accessibilityLabel="Me recentrer" onPress={locate}>
           <Ionicons name="locate" size={20} color={C.text} />
         </Pressable>
         {featured && (() => {
@@ -523,27 +529,24 @@ function MapScreen({ role, city, onSwitch }: { role: Role; city: City | null; on
                   </View>
                 )}
               </View>
-              <View style={[s.row, { marginTop: 14 }]}>
-                {role === 'medic' && (going === featured.id
-                  ? <Btn label="Je n'y vais plus" color={C.line} onPress={() => { setGoing(null); setRoute(null); }} />
-                  : <Btn label="J'y vais" color={C.orange} onPress={() => { setGoing(featured.id); computeRoute(featured, true); }} />)}
-                {role === 'medic' && <Btn label="Résolu" color={C.green} onPress={() => resolve(featured.id)} />}
-                {mine && role !== 'medic' && <Btn label="Annuler mon alerte" color={C.red} onPress={() => cancelMine(featured.id)} />}
-                {!mine && pos && (
-                  <Pressable onPress={() => computeRoute(featured)} style={[s.btn, s.iconBtn]} accessibilityLabel="Itinéraire">
-                    <Ionicons name="navigate" size={22} color="#fff" />
-                  </Pressable>
-                )}
-              </View>
-              {mine && role === 'medic' && (
-                <Pressable onPress={() => cancelMine(featured.id)} style={{ marginTop: 10, alignItems: 'center' }}>
-                  <Text style={s.cancelText}>Annuler mon alerte</Text>
-                </Pressable>
+              {(role === 'medic' || (!mine && pos)) && (
+                <View style={[s.row, { marginTop: 14 }]}>
+                  {role === 'medic' && (going === featured.id
+                    ? <Btn label="Je n'y vais plus" color={C.line} onPress={() => { setGoing(null); setRoute(null); }} />
+                    : <Btn label="J'y vais" color={C.orange} onPress={() => { setGoing(featured.id); computeRoute(featured, true); }} />)}
+                  {role === 'medic' && <Btn label="Résolu" color={C.green} onPress={() => resolve(featured.id)} />}
+                  {!mine && pos && <Btn icon="navigate" a11y="Itinéraire" color={C.blue} onPress={() => computeRoute(featured)} />}
+                </View>
+              )}
+              {mine && (
+                <View style={[s.row, { marginTop: 10 }]}>
+                  <Btn label="Annuler mon alerte" color={C.line} onPress={() => cancelMine(featured.id)} />
+                </View>
               )}
             </Pressable>
           );
         })()}
-        <Pressable onPress={() => openSheet(null)} style={({ pressed }) => [s.sos, pressed && { transform: [{ scale: 0.98 }] }]}
+        <Pressable onPress={() => openSheet(null)} style={({ pressed }) => [s.sos, pressed && s.pressed]}
           accessibilityRole="button" accessibilityLabel="Appeler un street medic">
           <Ionicons name="medical" size={28} color="#fff" />
           <Text style={s.sosText}>APPELER UN MEDIC</Text>
@@ -554,11 +557,11 @@ function MapScreen({ role, city, onSwitch }: { role: Role; city: City | null; on
           sheet fades in place (no slide), so a fast double tap confirms instead of closing. */}
       {sheet && <Overlay onBack={closeSheet}>
         <KeyboardAvoidingView behavior="padding" style={{ flex: 1 }}>
-        <Pressable style={s.backdrop} onPress={closeSheet} />
+        <Pressable style={{ flex: 1 }} onPress={closeSheet} />
         <View style={[s.sheet, { paddingBottom: insets.bottom + 16 }]}>
           <View style={s.row}>
             <Text style={s.sheetTitle}>Envoyer une alerte ?</Text>
-            <Pressable onPress={closeSheet} hitSlop={16} style={s.closeBtn} accessibilityLabel="Annuler">
+            <Pressable onPress={closeSheet} hitSlop={16} style={({ pressed }) => [s.closeBtn, pressed && s.pressed]} accessibilityLabel="Annuler">
               <Ionicons name="close" size={22} color={C.text} />
             </Pressable>
           </View>
@@ -571,7 +574,7 @@ function MapScreen({ role, city, onSwitch }: { role: Role; city: City | null; on
             {TAGS.map((t) => {
               const on = tags.includes(t);
               return (
-                <Pressable key={t} style={[s.tag, on && s.tagOn]}
+                <Pressable key={t} style={({ pressed }) => [s.tag, on && s.tagOn, pressed && s.pressed]}
                   onPress={() => setTags(on ? tags.filter((x) => x !== t) : [...tags, t])}>
                   <Text style={[s.tagText, on && { color: '#fff' }]}>{t}</Text>
                 </Pressable>
@@ -581,7 +584,7 @@ function MapScreen({ role, city, onSwitch }: { role: Role; city: City | null; on
           <TextInput value={note} onChangeText={setNote} maxLength={120} placeholder="Autre détail…"
             placeholderTextColor={C.muted} style={s.input} />
           <Pressable onPress={confirm} disabled={!target}
-            style={({ pressed }) => [s.sos, { marginTop: 24 }, !target && { opacity: 0.4 }, pressed && { transform: [{ scale: 0.98 }] }]}
+            style={({ pressed }) => [s.sos, { marginTop: 24 }, !target && { opacity: 0.4 }, pressed && s.pressed]}
             accessibilityRole="button" accessibilityLabel="Confirmer l'alerte">
             <Ionicons name="checkmark-circle" size={28} color="#fff" />
             <Text style={s.sosText}>CONFIRMER L'ALERTE</Text>
@@ -622,10 +625,12 @@ const SosMarker = memo(function SosMarker(p: {
   );
 });
 
-function Btn({ label, color, onPress }: { label: string; color: string; onPress: () => void }) {
+function Btn(p: { label?: string; icon?: any; a11y?: string; color: string; busy?: boolean; onPress: () => void }) {
   return (
-    <Pressable onPress={onPress} style={({ pressed }) => [s.btn, { backgroundColor: color }, pressed && { opacity: 0.8 }]}>
-      <Text style={s.btnText}>{label}</Text>
+    <Pressable onPress={p.onPress} accessibilityRole="button" accessibilityLabel={p.label ?? p.a11y}
+      style={({ pressed }) => [s.btn, !p.label && s.iconBtn, { backgroundColor: p.color }, pressed && s.pressed]}>
+      {p.busy ? <ActivityIndicator color="#fff" /> : p.icon && <Ionicons name={p.icon} size={22} color="#fff" />}
+      {!!p.label && <Text style={s.btnText}>{p.label}</Text>}
     </Pressable>
   );
 }
@@ -646,7 +651,7 @@ const s = StyleSheet.create({
   logo: { width: 64, height: 64, borderRadius: 20, backgroundColor: C.red, alignItems: 'center', justifyContent: 'center' },
   h1: { color: C.text, fontSize: 34, fontWeight: '800', marginTop: 20 },
   sub: { color: C.muted, fontSize: 16, lineHeight: 23, marginTop: 8 },
-  roleCard: { flexDirection: 'row', alignItems: 'center', gap: 14, backgroundColor: C.card, borderRadius: 20, padding: 18, marginTop: 12, borderWidth: 1, borderColor: C.line },
+  roleCard: { flexDirection: 'row', alignItems: 'center', gap: 14, backgroundColor: C.card, borderRadius: 24, padding: 18, marginTop: 12, borderWidth: 1, borderColor: C.line },
   roleIcon: { width: 48, height: 48, borderRadius: 14, alignItems: 'center', justifyContent: 'center' },
   roleTitle: { color: C.text, fontSize: 17, fontWeight: '700' },
   roleBody: { color: C.muted, fontSize: 14, lineHeight: 19, marginTop: 3 },
@@ -657,9 +662,9 @@ const s = StyleSheet.create({
   pillMuted: { color: C.muted },
   round: { width: 44, height: 44, borderRadius: 22, backgroundColor: C.card + 'F2', alignItems: 'center', justifyContent: 'center', ...shadow },
   dot: { width: 10, height: 10, borderRadius: 5 },
-  err: { position: 'absolute', left: 12, right: 12, flexDirection: 'row', alignItems: 'center', gap: 10, backgroundColor: C.orange, padding: 12, borderRadius: 14, ...shadow },
+  err: { position: 'absolute', left: 12, right: 12, flexDirection: 'row', alignItems: 'center', gap: 10, backgroundColor: C.orange, padding: 14, borderRadius: 24, ...shadow },
   errText: { flex: 1, color: '#111', fontWeight: '600', fontSize: 14, lineHeight: 19 },
-  banner: { position: 'absolute', left: 12, right: 12, flexDirection: 'row', alignItems: 'center', gap: 12, backgroundColor: C.red, borderRadius: 16, padding: 14, ...shadow },
+  banner: { position: 'absolute', left: 12, right: 12, flexDirection: 'row', alignItems: 'center', gap: 12, backgroundColor: C.red, borderRadius: 24, padding: 14, ...shadow },
   bannerTitle: { color: '#fff', fontWeight: '800', fontSize: 15 },
   bannerBody: { color: '#fff', opacity: 0.9, marginTop: 2 },
 
@@ -674,17 +679,17 @@ const s = StyleSheet.create({
   bottom: { position: 'absolute', left: 16, right: 16, bottom: 0 },
   sos: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 12, height: 72, borderRadius: 24, backgroundColor: C.red, ...shadow },
   sosText: { color: '#fff', fontSize: 19, fontWeight: '900', letterSpacing: 0.5 },
-  card: { backgroundColor: C.card, borderRadius: 22, padding: 18, ...shadow },
+  card: { backgroundColor: C.card, borderRadius: 24, padding: 18, ...shadow },
   row: { flexDirection: 'row', alignItems: 'center', gap: 10 },
   cardTitle: { color: C.text, fontSize: 18, fontWeight: '800' },
   cardNote: { color: C.text, fontSize: 15, marginTop: 10 },
   cardMeta: { color: C.muted, fontSize: 14, marginTop: 6 },
-  btn: { flex: 1, height: 50, borderRadius: 14, alignItems: 'center', justifyContent: 'center' },
-  iconBtn: { flex: 0, width: 50, backgroundColor: C.blue },
+  btn: { flex: 1, flexDirection: 'row', gap: 8, height: 50, borderRadius: 14, alignItems: 'center', justifyContent: 'center' },
+  iconBtn: { flex: 0, width: 50 },
+  pressed: { opacity: 0.75 },
   btnText: { color: '#fff', fontWeight: '800', fontSize: 16 },
 
-  backdrop: { flex: 1, backgroundColor: '#0008' },
-  sheet: { backgroundColor: C.card, borderTopLeftRadius: 28, borderTopRightRadius: 28, paddingTop: 22, paddingHorizontal: 16 },
+  sheet: { backgroundColor: C.card, borderTopLeftRadius: 24, borderTopRightRadius: 24, paddingTop: 22, paddingHorizontal: 16 }, // 16: confirm lands exactly on the SOS button
   closeBtn: { marginLeft: 'auto', width: 40, height: 40, borderRadius: 20, backgroundColor: C.line, alignItems: 'center', justifyContent: 'center' },
   sheetTitle: { color: C.text, fontSize: 22, fontWeight: '800' },
   label: { color: C.muted, fontSize: 13, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.5 },
@@ -692,11 +697,11 @@ const s = StyleSheet.create({
   tag: { paddingHorizontal: 14, height: 38, borderRadius: 19, borderWidth: 1, borderColor: C.line, justifyContent: 'center' },
   tagOn: { backgroundColor: C.red, borderColor: C.red },
   tagText: { color: C.text, fontWeight: '600' },
-  input: { marginTop: 12, height: 48, borderRadius: 14, backgroundColor: C.bg, color: C.text, paddingHorizontal: 14, fontSize: 15, borderWidth: 1, borderColor: C.line },
+  input: { marginTop: 12, height: 50, borderRadius: 14, backgroundColor: C.bg, color: C.text, paddingHorizontal: 14, fontSize: 15, borderWidth: 1, borderColor: C.line },
   cancelText: { color: C.muted, fontWeight: '700', fontSize: 16 },
 
-  dialogWrap: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: '#000A', justifyContent: 'center', padding: 24 },
-  dialog: { backgroundColor: C.card, borderRadius: 24, padding: 22, ...shadow },
+  dialogWrap: { flex: 1, justifyContent: 'center', padding: 24 },
+  dialog: { backgroundColor: C.card, borderRadius: 24, padding: 18, ...shadow },
   dialogBody: { color: C.muted, fontSize: 15, lineHeight: 21, marginTop: 8 },
   bar: { height: 10, borderRadius: 5, backgroundColor: C.line, marginTop: 14, overflow: 'hidden' },
   barFill: { height: 10, borderRadius: 5, backgroundColor: C.red },
