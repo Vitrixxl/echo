@@ -27,7 +27,7 @@ const TAGS = ['Blessure', 'Saignement', 'Gaz lacrymo', 'Malaise', 'Inconscient',
 
 type Role = 'medic' | 'civil';
 type Pos = { lat: number; lon: number };
-type Dialog = { title: string; body?: string; actions: { label: string; color?: string; onPress?: () => void }[] };
+type Dialog = { title: string; body?: string; icon?: any; actions: { label: string; color?: string; onPress?: () => void }[] };
 type Route = { to: string; coords: LngLat[]; m: number; exact: boolean };
 
 export default function App() {
@@ -49,9 +49,10 @@ export default function App() {
   };
 
   const pickRole = (r: Role) => r === 'civil' ? setRole(r) : setDialog({
+    icon: 'warning',
     title: 'Réservé aux personnes formées',
     body: "Ne te déclare medic que si tu as une formation de secouriste ou de street medic. Les blessés compteront sur toi : un mauvais geste peut aggraver une blessure, et les autres medics peuvent ne pas venir s'ils te voient en route.\n\nEn medic, ta position est visible en continu par tous ceux qui ont l'application, y compris des personnes hostiles.",
-    actions: [{ label: 'Retour' }, { label: 'Je suis formé·e', color: C.green, onPress: () => setRole('medic') }],
+    actions: [{ label: 'Retour' }, { label: 'Je suis formé·e', color: C.red, onPress: () => setRole('medic') }],
   });
 
   const screen =
@@ -171,6 +172,7 @@ function DialogModal({ dialog, onClose }: { dialog: Dialog | null; onClose: () =
       <View style={s.dialogWrap}>
         <Pressable style={StyleSheet.absoluteFill} onPress={onClose} />
         <View style={s.dialog}>
+          {dialog.icon && <View style={s.dialogIcon}><Ionicons name={dialog.icon} size={44} color="#fff" /></View>}
           <Text style={s.sheetTitle}>{dialog.title}</Text>
           {!!dialog.body && <Text style={s.dialogBody}>{dialog.body}</Text>}
           <View style={[s.row, { marginTop: 22 }]}>
@@ -702,6 +704,7 @@ const s = StyleSheet.create({
 
   dialogWrap: { flex: 1, justifyContent: 'center', padding: 24 },
   dialog: { backgroundColor: C.card, borderRadius: 24, padding: 18, ...shadow },
+  dialogIcon: { width: 80, height: 80, borderRadius: 24, backgroundColor: C.red, alignItems: 'center', justifyContent: 'center', marginBottom: 18 },
   dialogBody: { color: C.muted, fontSize: 15, lineHeight: 21, marginTop: 8 },
   bar: { height: 10, borderRadius: 5, backgroundColor: C.line, marginTop: 14, overflow: 'hidden' },
   barFill: { height: 10, borderRadius: 5, backgroundColor: C.red },
