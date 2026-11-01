@@ -1,7 +1,6 @@
 FROM oven/bun:1-alpine
 WORKDIR /app
 COPY index.ts .
-COPY fonts fonts
 # The named volume inherits this ownership, so the unprivileged user can write to it.
 RUN mkdir /data && chown bun:bun /data
 ENV PORT=8787 DATA=/data

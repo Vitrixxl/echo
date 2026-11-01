@@ -56,8 +56,6 @@ export function start(port = 8787, data = './data', token = '', trustProxy = fal
       const m = req.method;
 
       if (m === 'GET' && pathname === '/') return new Response(page(count(), existsSync(apk)), { headers: { 'content-type': 'text/html; charset=utf-8' } });
-      if (m === 'GET' && pathname === '/caveat.woff2')
-        return new Response(Bun.file(join(import.meta.dir, 'fonts/caveat.woff2')), { headers: { 'content-type': 'font/woff2', 'cache-control': 'public, max-age=31536000, immutable' } });
       if (m === 'GET' && pathname === '/download') {
         if (!existsSync(apk)) return json({ error: 'no apk yet' }, 404);
         return new Response(Bun.file(apk), {
@@ -121,96 +119,51 @@ export function start(port = 8787, data = './data', token = '', trustProxy = fal
   });
 }
 
-// The "link in bio", in the notebook style of the promo video: dotted paper, red margin, handwritten
-// notes (Caveat, subset in fonts/), cut-out tags. Self-contained, no third-party requests.
-// Android download; iPhone greyed out until the App Store version exists.
+// The "link in bio": same look as the app (dark, app red, system font), one headline and the button.
+// Android download; iPhone greyed out until the App Store version exists. No third-party requests.
+const LOGO = `<svg width="34" height="34" viewBox="0 0 100 100" aria-hidden="true"><rect width="100" height="100" rx="24" fill="#E5484D"/>
+<g fill="none" stroke="#fff" stroke-width="6.5" stroke-linecap="round"><path d="M64 34a20 20 0 0 1 0 32M36 34a20 20 0 0 0 0 32M73 25a33 33 0 0 1 0 50M27 25a33 33 0 0 0 0 50"/></g>
+<circle cx="50" cy="50" r="7" fill="#fff"/></svg>`;
 const ANDROID = `<svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M17.6 9.48l1.84-3.18a.38.38 0 0 0-.66-.38l-1.86 3.22a11.5 11.5 0 0 0-9.84 0L5.22 5.92a.38.38 0 0 0-.66.38L6.4 9.48A10.8 10.8 0 0 0 1 18h22a10.8 10.8 0 0 0-5.4-8.52zM7 15.25a1.25 1.25 0 1 1 0-2.5 1.25 1.25 0 0 1 0 2.5zm10 0a1.25 1.25 0 1 1 0-2.5 1.25 1.25 0 0 1 0 2.5z"/></svg>`;
 const APPLE = `<svg width="20" height="22" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M16.37 1.43c0 1.14-.42 2.2-1.25 3.03-.9.9-1.98 1.42-3.15 1.33-.15-1.1.4-2.26 1.2-3.08.88-.9 2.15-1.48 3.2-1.28zM20.5 17.2c-.56 1.3-.83 1.87-1.55 3.02-1 1.6-2.42 3.6-4.17 3.6-1.56.02-1.96-1.02-4.08-1-2.12 0-2.56 1.02-4.12 1-1.75-.02-3.1-1.83-4.1-3.42C-.33 15.95-.62 10.6 1.6 7.85c1.06-1.32 2.72-2.1 4.3-2.1 1.6 0 2.6 1.02 3.93 1.02 1.28 0 2.06-1.02 3.92-1.02 1.4 0 2.88.76 3.94 2.08-3.46 1.9-2.9 6.84.81 8.37z"/></svg>`;
-const MESH = `<svg class="mesh" viewBox="0 0 350 170" role="img" aria-label="L'alerte passe de téléphone en téléphone jusqu'aux medics"><path class="e" d="M30 82L98 40"/><path class="f" pathLength="1" style="--h:0" d="M30 82L98 40"/><path class="e" d="M30 82L98 124"/><path class="f" pathLength="1" style="--h:0" d="M30 82L98 124"/><path class="e" d="M98 40L168 22"/><path class="f" pathLength="1" style="--h:1" d="M98 40L168 22"/><path class="e" d="M98 40L168 84"/><path class="f" pathLength="1" style="--h:1" d="M98 40L168 84"/><path class="e" d="M98 124L168 84"/><path class="f" pathLength="1" style="--h:1" d="M98 124L168 84"/><path class="e" d="M98 124L168 142"/><path class="f" pathLength="1" style="--h:1" d="M98 124L168 142"/><path class="e" d="M168 22L240 52"/><path class="f" pathLength="1" style="--h:2" d="M168 22L240 52"/><path class="e" d="M168 84L240 52"/><path class="f" pathLength="1" style="--h:2" d="M168 84L240 52"/><path class="e" d="M168 84L240 118"/><path class="f" pathLength="1" style="--h:2" d="M168 84L240 118"/><path class="e" d="M168 142L240 118"/><path class="f" pathLength="1" style="--h:2" d="M168 142L240 118"/><path class="e" d="M240 52L312 26"/><path class="f" pathLength="1" style="--h:3" d="M240 52L312 26"/><path class="e" d="M240 52L312 88"/><path class="f" pathLength="1" style="--h:3" d="M240 52L312 88"/><path class="e" d="M240 118L312 88"/><path class="f" pathLength="1" style="--h:3" d="M240 118L312 88"/><path class="e" d="M240 118L318 146"/><path class="f" pathLength="1" style="--h:3" d="M240 118L318 146"/><rect class="n" style="--h:0" x="21" y="68" width="18" height="28" rx="3"/><rect class="n" style="--h:1" x="89" y="26" width="18" height="28" rx="3"/><rect class="n" style="--h:1" x="89" y="110" width="18" height="28" rx="3"/><rect class="n" style="--h:2" x="159" y="8" width="18" height="28" rx="3"/><rect class="n" style="--h:2" x="159" y="70" width="18" height="28" rx="3"/><rect class="n" style="--h:2" x="159" y="128" width="18" height="28" rx="3"/><rect class="n" style="--h:3" x="231" y="38" width="18" height="28" rx="3"/><rect class="n" style="--h:3" x="231" y="104" width="18" height="28" rx="3"/><rect class="n m" x="303" y="12" width="18" height="28" rx="3"/><path class="plus" d="M312 20v12M306 26h12"/><rect class="n" style="--h:4" x="303" y="74" width="18" height="28" rx="3"/><rect class="n m" x="309" y="132" width="18" height="28" rx="3"/><path class="plus" d="M318 140v12M312 146h12"/><rect x="12" y="44" width="36" height="17" fill="#D9443F"/><text x="30" y="57" class="sos">SOS</text></svg>`;
 
 const page = (n: number, hasApk: boolean) => `<!doctype html>
 <html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Écho : alertes pour street medics</title>
-<meta name="description" content="Application d'alerte pour les street medics en manifestation, qui fonctionne sans internet.">
-<meta property="og:title" content="Écho : alertes pour street medics">
-<meta property="og:description" content="Application d'alerte pour les street medics en manifestation, qui fonctionne sans internet.">
-<meta name="theme-color" content="#FCFCF8">
-<link rel="preload" href="/caveat.woff2" as="font" type="font/woff2" crossorigin>
+<title>Écho : organisons-nous face à la répression</title>
+<meta name="description" content="Écho alerte les street medics quand quelqu'un est blessé en manifestation, sans internet.">
+<meta property="og:title" content="Organisons-nous face à la répression">
+<meta property="og:description" content="Écho alerte les street medics quand quelqu'un est blessé en manifestation, sans internet.">
+<meta name="theme-color" content="#0F1115">
 <style>
-@font-face{font-family:Caveat;src:url(/caveat.woff2) format("woff2");font-weight:400 700;font-display:swap}
 *{box-sizing:border-box}
-:root{--ink:#141416;--red:#D9443F;--blue:#2B3FF0;--green:#28995F;--yellow:#FFD84A;--paper:#FCFCF8;--muted:#5F5F5B}
-body{margin:0;color:var(--ink);font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
-  background:var(--paper) radial-gradient(#d2d2cd 1.1px,transparent 1.3px) 0 0/22px 22px}
-.paper{position:relative;max-width:520px;min-height:100vh;margin:0 auto;padding:22px 22px 48px 54px}
-.paper::before{content:"";position:absolute;left:34px;top:0;bottom:0;width:2px;background:#E9A3A1}
-.hand{font-family:Caveat,"Comic Sans MS",cursive}
-header{display:flex;justify-content:space-between;align-items:baseline;color:var(--red)}
-header .hand{font-size:30px;font-weight:700}header span:last-child{font-weight:700;font-size:15px}
-h1{font-size:68px;line-height:1;font-weight:900;letter-spacing:-2.5px;margin:34px 0 0}
-.scrib{color:var(--red);font-size:29px;font-weight:600;line-height:1.1;margin:6px 0 22px;transform:rotate(-2deg);transform-origin:left}
-.lead{font-size:17px;line-height:1.55;margin:0 0 28px}
-.tag{position:relative;display:flex;align-items:center;justify-content:center;gap:10px;height:62px;margin:0 0 18px;
-  border:3px solid var(--ink);box-shadow:6px 6px 0 var(--ink);background:#fff;color:var(--ink);font-weight:800;font-size:17px;text-decoration:none}
-a.tag{background:var(--red);color:#fff;transform:rotate(-1deg)}
-a.tag:active{transform:translate(4px,4px) rotate(-1deg);box-shadow:2px 2px 0 var(--ink)}
-.tag.off{color:#A2A29D;border-color:#C2C2BD;box-shadow:6px 6px 0 #C2C2BD;background:#F3F3EF;transform:rotate(.6deg)}
-.stamp{position:absolute;right:12px;top:50%;transform:translateY(-50%) rotate(-9deg);border:2.5px solid var(--red);color:var(--red);
-  background:rgba(252,252,248,.9);font-size:12px;font-weight:800;letter-spacing:1px;text-transform:uppercase;padding:3px 7px}
-.note{position:relative;background:#fff;border:1px solid #DAD9D4;box-shadow:3px 5px 0 rgba(0,0,0,.07);padding:20px 18px 16px;margin:38px 0 0;transform:rotate(-1.2deg)}
-.note::before,.note::after{content:"";position:absolute;top:-13px;width:84px;height:26px;background:rgba(255,216,74,.78)}
-.note::before{left:-18px;transform:rotate(-22deg)}.note::after{right:-18px;transform:rotate(22deg)}
-.mesh{display:block;width:100%;height:auto}
-.e{fill:none;stroke:#B9B8B2;stroke-width:1.6}
-.f{fill:none;stroke:var(--red);stroke-width:3.2;stroke-linecap:round;stroke-dasharray:1;stroke-dashoffset:1;animation:flow 6s infinite;animation-delay:calc(var(--h) * .45s)}
-@keyframes flow{0%{stroke-dashoffset:1;opacity:1}9%{stroke-dashoffset:0}72%{stroke-dashoffset:0;opacity:1}88%,100%{stroke-dashoffset:0;opacity:0}}
-.n{fill:#fff;stroke:var(--ink);stroke-width:2.4;animation:lit 6s infinite;animation-delay:calc(var(--h) * .45s + .3s)}
-@keyframes lit{0%{fill:#fff}5%,72%{fill:#F8D9D7}88%,100%{fill:#fff}}
-.n.m{fill:var(--green);stroke:var(--ink);animation:none}
-.plus{stroke:#fff;stroke-width:3;stroke-linecap:round}
-.sos{fill:#fff;font-size:11.5px;font-weight:800;text-anchor:middle;letter-spacing:.5px}
-.cap{font-size:23px;color:var(--muted);text-align:center;margin:6px 0 0}
-.count{display:flex;align-items:baseline;gap:10px;margin:34px 0 0;font-size:17px;font-weight:600}
-.count .hand{font-size:60px;font-weight:700;color:var(--red);line-height:1;text-decoration:underline wavy rgba(217,68,63,.45) 2px;text-underline-offset:8px}
-h2{font-family:Caveat,cursive;font-size:36px;font-weight:700;margin:44px 0 0;line-height:1}
-.notes .note{margin-top:30px}.notes .note:nth-child(2){transform:rotate(1.1deg)}
-.label{display:inline-block;color:#fff;font-weight:800;font-size:13px;letter-spacing:.8px;padding:5px 10px}
-.blue{background:var(--blue)}.green{background:var(--green)}
-.notes p{margin:12px 0 0;font-size:16px;line-height:1.5}
-.why{font-size:17px;line-height:1.6;margin:34px 0 0}
-mark{background:linear-gradient(transparent 12%,var(--yellow) 12%,var(--yellow) 88%,transparent 88%);color:inherit;font-weight:700;padding:0 3px}
-ul{list-style:none;padding:0;margin:26px 0 0}
-li{display:flex;gap:12px;align-items:flex-start;margin:0 0 12px;font-size:16px;line-height:1.45}
-li::before{content:"";flex:none;width:21px;height:21px;margin-top:1px;border:2.5px solid var(--ink);background:#fff url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20'%3E%3Cpath d='M4 10.5l4 4 8-9' fill='none' stroke='%2328995F' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center/88% no-repeat}
-footer{margin-top:42px;color:var(--muted);font-size:13.5px;line-height:1.6}
-footer a{color:var(--ink)}
-@media (prefers-reduced-motion:reduce){.f,.n{animation:none}.f{stroke-dashoffset:0}}
-</style></head><body><div class="paper">
-<header><span class="hand">écho</span><span>street medics</span></header>
-<h1>Écho</h1>
-<p class="hand scrib">→ alerter les medics quand le réseau est coupé</p>
-<p class="lead">Application d'alerte pour les street medics en manifestation. Les téléphones se transmettent l'alerte entre eux, sans internet.</p>
+body{margin:0;background:#0F1115;color:#F2F4F7;font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+main{min-height:100svh;max-width:560px;margin:0 auto;padding:28px 24px 32px;display:flex;flex-direction:column}
+.brand{display:flex;align-items:center;gap:10px;font-weight:800;font-size:19px}
+.hero{flex:1;display:flex;flex-direction:column;justify-content:center;padding:40px 0}
+h1{font-size:clamp(40px,11vw,62px);line-height:1.02;font-weight:900;letter-spacing:-1.5px;margin:0;text-transform:uppercase}
+h1 span{color:#E5484D}
+.lead{color:#9BA1A6;font-size:17px;line-height:1.55;margin:22px 0 34px;max-width:440px}
+.b{display:flex;align-items:center;justify-content:center;gap:12px;height:68px;border-radius:24px;font-weight:900;font-size:18px;letter-spacing:.3px;text-decoration:none;margin-bottom:12px}
+.android{background:#E5484D;color:#fff}
+.off{background:#171A21;color:#5E636B}
+.off small{font-weight:700;font-size:13px}
+.info{color:#9BA1A6;font-size:14px;line-height:1.55;margin:18px 2px 0}
+footer{color:#5E636B;font-size:13px;line-height:1.6;border-top:1px solid #262A33;padding-top:16px}
+footer a{color:#9BA1A6}
+</style></head><body><main>
+<div class="brand">${LOGO} Écho</div>
+<div class="hero">
+<h1>Organisons-nous face à <span>la répression.</span></h1>
+<p class="lead">Écho alerte les street medics quand quelqu'un est blessé en manifestation. Sans internet : les téléphones se transmettent l'alerte entre eux.</p>
 ${hasApk
-  ? `<a class="tag" href="/download">${ANDROID} Télécharger pour Android</a>`
-  : `<div class="tag off" aria-disabled="true">${ANDROID} Android <span class="stamp">bientôt</span></div>`}
-<div class="tag off" aria-disabled="true">${APPLE} iPhone <span class="stamp">bientôt</span></div>
-
-<figure class="note" style="margin-left:0;margin-right:0">${MESH}<figcaption class="hand cap">l'alerte passe d'un téléphone à l'autre jusqu'aux medics</figcaption></figure>
-${n > 0 ? `<p class="count"><span class="hand">${n.toLocaleString('fr-FR')}</span> installation${n > 1 ? 's' : ''}</p>` : ''}
-
-<h2>comment ça marche</h2>
-<div class="notes">
-<div class="note"><span class="label blue">CIVIL</span><p>En cas de blessure, vous appuyez sur le bouton rouge et vous confirmez. L'alerte part avec votre position.</p></div>
-<div class="note"><span class="label green">MEDIC</span><p>Vous recevez les alertes avec le chemin pour y aller, et vous voyez qui est en route ou sur place.</p></div>
+  ? `<a class="b android" href="/download">${ANDROID} TÉLÉCHARGER POUR ANDROID</a>`
+  : `<div class="b off" aria-disabled="true">${ANDROID} ANDROID <small>bientôt</small></div>`}
+<div class="b off" aria-disabled="true">${APPLE} IPHONE <small>bientôt</small></div>
+<p class="info">L'alerte ne passe que par les téléphones à proximité qui ont l'application. Plus elle est installée, plus elle porte loin.${n > 0 ? ` ${n.toLocaleString('fr-FR')} installation${n > 1 ? 's' : ''}.` : ''}</p>
 </div>
-<p class="why">L'alerte passe uniquement par les téléphones à proximité qui ont l'application : <mark>il faut qu'un maximum de personnes l'installe.</mark></p>
-<ul>
-<li>Pas de compte.</li>
-<li>Votre position n'est partagée qu'en cas d'alerte, ou en continu si vous êtes medic.</li>
-<li>La carte de votre ville est téléchargée pour fonctionner hors-ligne.</li>
-</ul>
-<footer>Android : après le téléchargement, autorisez l'installation depuis votre navigateur.<br>Code source : <a href="https://github.com/Vitrixxl/echo">github.com/Vitrixxl/echo</a></footer>
-</div></body></html>`;
+<footer>Gratuit, sans compte. Votre position n'est partagée qu'en cas d'alerte, ou en continu si vous êtes medic.<br>
+Android : autorisez l'installation depuis votre navigateur après le téléchargement. Code source : <a href="https://github.com/Vitrixxl/echo">github.com/Vitrixxl/echo</a></footer>
+</main></body></html>`;
 
 if (import.meta.main) {
   const s = start(Number(process.env.PORT ?? 8787), process.env.DATA ?? './data', process.env.DEPLOY_TOKEN ?? '', process.env.TRUST_PROXY === '1');
