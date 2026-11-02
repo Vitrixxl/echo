@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test';
-import { coverage, MEDIC_TTL_MS, merge, prune, SOS_TTL_MS, type Alert, type Store } from './alerts';
+import { coverage, digest, MEDIC_TTL_MS, merge, missingFrom, prune, SOS_TTL_MS, type Alert, type Store } from './alerts';
 
 const now = 1_000_000_000_000;
 const base: Alert = { id: 'a', kind: 'sos', lat: 48.85, lon: 2.35, note: '', status: 'need', createdAt: now, updatedAt: now };
@@ -63,4 +63,21 @@ test('coverage: en route by declaration, sur place by GPS distance', () => {
 test("coverage: the medic who raised the SOS doesn't count as sur place", () => {
   const author = { ...medic, id: 'm-abc123' };
   expect(coverage({ ...base, id: 'abc123xyz' }, [author])).toEqual({ enRoute: 0, onSite: 0 });
+});
+
+test('digest sync: each side sends only what the other lacks or has older', () => {
+  const a: Store = {}, b: Store = {};
+  const shared = { ...base, id: 's' };
+  merge(a, [shared, { ...base, id: 'onlyA' }, { ...base, id: 'x', status: 'done', updatedAt: now + 5 }], now);
+  merge(b, [shared, { ...base, id: 'onlyB' }, { ...base, id: 'x' }], now);
+  const toB = missingFrom(a, digest(b)), toA = missingFrom(b, digest(a));
+  expect(toB.map((r) => r.id).sort()).toEqual(['onlyA', 'x']); // not 'shared': same version
+  expect(toA.map((r) => r.id)).toEqual(['onlyB']); // b's 'x' is older, not sent
+  merge(a, toA, now); merge(b, toB, now);
+  expect(digest(a).sort()).toEqual(digest(b).sort());
+  // same time, further status wins, like merge
+  expect(missingFrom({ x: { ...base, id: 'x', status: 'taken' } }, [['x', now, 0]]).length).toBe(1);
+  // untrusted peer: a non-list digest gets nothing, junk entries are ignored (= peer has nothing)
+  expect(missingFrom(a, 'nope')).toEqual([]);
+  expect(missingFrom(a, [[1, 2], null, ['s', 'x', 0]]).length).toBe(Object.keys(a).length);
 });

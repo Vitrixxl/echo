@@ -67,6 +67,23 @@ export function merge(store: Store, incoming: unknown[], now = Date.now()): Aler
   return changed;
 }
 
+// Sync on connect: each side sends a digest (id, version) instead of all its records, and the
+// other side answers with only what is missing or older there (~45 B per entry vs ~190 B).
+export type Digest = [id: string, updatedAt: number, rank: number][];
+export const digest = (store: Store): Digest => Object.values(store).map((a) => [a.id, a.updatedAt, RANK[a.status]]);
+
+/** Our records that the peer (described by its untrusted digest) lacks or has an older version of. */
+export function missingFrom(store: Store, theirs: unknown): Alert[] {
+  if (!Array.isArray(theirs)) return [];
+  const has = new Map<string, [number, number]>();
+  for (const e of theirs)
+    if (Array.isArray(e) && typeof e[0] === 'string' && Number.isFinite(e[1]) && Number.isFinite(e[2])) has.set(e[0], [e[1], e[2]]);
+  return Object.values(store).filter((a) => {
+    const h = has.get(a.id);
+    return !h || (a.updatedAt !== h[0] ? a.updatedAt > h[0] : RANK[a.status] > h[1]);
+  });
+}
+
 /** Drops expired records, returns true if anything was removed. */
 export function prune(store: Store, now = Date.now()) {
   let removed = false;

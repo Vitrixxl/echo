@@ -20,6 +20,7 @@ import { buildGraph, guidance, lengthM, shortestPath, type LngLat, type Turn } f
 const ROAD_LAYERS = ['highway_path', 'highway_minor', 'highway_major_inner', 'highway_major_subtle', 'road_pier'];
 const WALK_MPS = 1.25;
 const MANIF_KEY = 'echo.manif.v1';
+const ECO_KEY = 'echo.eco.v1';
 const NO_PAD = { top: 0, bottom: 0, left: 0, right: 0 };
 const OFF_ROUTE_M = 40; // further than this from the route: offer to recompute it
 const ARRIVED_M = 25;
@@ -254,6 +255,10 @@ function MapScreen({ role, city, onSwitch }: { role: Role; city: City | null; on
   const manifRef = useRef(manif);
   manifRef.current = manif;
   useEffect(() => { AsyncStorage.getItem(MANIF_KEY).then((v) => v === '1' && setManif(true), () => {}); }, []);
+  // Économie de batterie: the map draws at most 30 frames/s (pans and camera moves cost half the GPU).
+  const [eco, setEco] = useState(false);
+  useEffect(() => { AsyncStorage.getItem(ECO_KEY).then((v) => v === '1' && setEco(true), () => {}); }, []);
+  const toggleEco = () => { setEco(!eco); AsyncStorage.setItem(ECO_KEY, eco ? '0' : '1').catch(() => {}); };
   useEffect(() => {
     if (!Manif) return;
     if (manif) ensurePermissions().finally(() => Manif!.setActive(true)); // the service needs its permissions first
@@ -483,7 +488,7 @@ function MapScreen({ role, city, onSwitch }: { role: Role; city: City | null; on
 
   return (
     <View style={{ flex: 1, backgroundColor: C.bg }}>
-      <MapView ref={map} style={{ flex: 1 }} mapStyle={MAP_STYLE} logo={false} compass={false} androidView="texture"
+      <MapView ref={map} style={{ flex: 1 }} mapStyle={MAP_STYLE} logo={false} compass={false} androidView="texture" preferredFramesPerSecond={eco ? 30 : 120}
         attributionPosition={nav ? { top: screenH * 0.3, left: 12 } : { top: insets.top + 64, left: 12 }}
         onPress={() => setSelected(null)}
         onDidFinishRenderingMapFully={() => { rendered.current?.(); rendered.current = null; }}
@@ -595,6 +600,11 @@ function MapScreen({ role, city, onSwitch }: { role: Role; city: City | null; on
             <Text style={s.pillText}>{manif ? 'Mode manif activé' : 'Mode manif'}</Text>
           </Pressable>
         )}
+        <Pressable style={({ pressed }) => [s.pill, eco && { backgroundColor: C.green }, pressed && s.pressed]}
+          accessibilityRole="switch" accessibilityState={{ checked: eco }} onPress={toggleEco}>
+          <Ionicons name="leaf" size={16} color={C.text} />
+          <Text style={s.pillText}>Éco batterie</Text>
+        </Pressable>
         <Pressable style={({ pressed }) => [s.round, { marginLeft: 'auto' }, pressed && s.pressed]} accessibilityLabel="Me recentrer" onPress={locate}>
           <Ionicons name="locate" size={20} color={C.text} />
         </Pressable>

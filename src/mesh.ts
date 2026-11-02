@@ -2,18 +2,20 @@
 //  - BLE GATT (modules/ble-mesh): works Android <-> iPhone, no Google services needed
 //  - Nearby (Google Nearby on Android, Multipeer on iOS): faster, same-platform only
 // Every phone discovers neighbours, auto-connects and floods records. On connect: full
-// sync (newcomers get everything). On receive: forward only what changed to the other
-// peers, so every record crosses the whole mesh once per link.
+// sync (newcomers get everything they lack). On receive: forward only what changed to the other
+// peers, so every record crosses the whole mesh once per link. Connect sync is by digest:
+// both sides send {h: [[id, updatedAt, rank]…]} and answer with only what the other lacks.
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Nearby from 'expo-nearby-connections';
 import { useEffect, useRef, useState } from 'react';
 import { AppState, PermissionsAndroid, Platform } from 'react-native';
 import BleMesh from '../modules/ble-mesh';
-import { merge, prune, type Alert, type Status, type Store } from './alerts';
+import { digest, merge, missingFrom, prune, type Alert, type Status, type Store } from './alerts';
 
 const KEY = 'echo.records.v1';
 const MINE_KEY = 'echo.mine.v1'; // ids of SOS raised from this phone, so they can be cancelled
 const CHUNK = 40; // records per payload, stays far below Nearby's 32 KB byte-payload limit
+const DIGEST_MAX = 600; // ~27 KB: bigger digests don't fit one Nearby payload, send the records instead
 const RETRY_MS = 15_000;
 const BLE = 'ble:'; // peer ids from the BLE transport are prefixed to route sends
 
@@ -75,11 +77,10 @@ export function useMesh() {
         AsyncStorage.setItem(KEY, JSON.stringify(sos)).catch(() => {});
       }, 5000);
   };
+  const sendText = (peerId: string, text: string) =>
+    (peerId.startsWith(BLE) ? BleMesh.send(peerId.slice(BLE.length), text) : Nearby.sendText(peerId, text)).catch(() => {});
   const send = (peerId: string, list: Alert[]) => {
-    for (let i = 0; i < list.length; i += CHUNK) {
-      const text = JSON.stringify(list.slice(i, i + CHUNK));
-      (peerId.startsWith(BLE) ? BleMesh.send(peerId.slice(BLE.length), text) : Nearby.sendText(peerId, text)).catch(() => {});
-    }
+    for (let i = 0; i < list.length; i += CHUNK) sendText(peerId, JSON.stringify(list.slice(i, i + CHUNK)));
   };
   const broadcast = (list: Alert[], except?: string) => {
     for (const p of peers.current) if (p !== except) send(p, list);
@@ -92,7 +93,9 @@ export function useMesh() {
     const link = (peerId: string) => {
       peers.current.add(peerId);
       setPeerCount(peers.current.size);
-      send(peerId, Object.values(store.current));
+      const d = digest(store.current);
+      if (d.length > DIGEST_MAX) send(peerId, Object.values(store.current));
+      else sendText(peerId, JSON.stringify({ h: d }));
     };
     const unlink = (peerId: string) => {
       peers.current.delete(peerId);
@@ -101,6 +104,11 @@ export function useMesh() {
     const receive = (peerId: string, text: string) => {
       let data: unknown;
       try { data = JSON.parse(text); } catch { return; }
+      if (data && typeof data === 'object' && 'h' in data) {
+        const list = missingFrom(store.current, (data as { h: unknown }).h);
+        if (list.length) send(peerId, list);
+        return;
+      }
       if (!Array.isArray(data)) return;
       const known = new Set(Object.keys(store.current));
       const changed = merge(store.current, data);
