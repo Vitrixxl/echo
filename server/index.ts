@@ -1,4 +1,4 @@
-// Écho server, hosted by pihost (compose.yaml at the repo root). Stores nothing about anyone.
+// Brancard server, hosted by pihost (compose.yaml at the repo root). Stores nothing about anyone.
 //   GET  /                         download page (the "link in bio")
 //   GET  /download                 latest APK
 //   GET  /count, POST /install     install counter (one install per IP per hour, IPs only kept in memory)
@@ -59,7 +59,7 @@ export function start(port = 8787, data = './data', token = '', trustProxy = fal
       if (m === 'GET' && pathname === '/download') {
         if (!existsSync(apk)) return json({ error: 'no apk yet' }, 404);
         return new Response(Bun.file(apk), {
-          headers: { 'content-type': 'application/vnd.android.package-archive', 'content-disposition': 'attachment; filename="Echo.apk"' },
+          headers: { 'content-type': 'application/vnd.android.package-archive', 'content-disposition': 'attachment; filename="Brancard.apk"' },
         });
       }
       if (m === 'GET' && pathname === '/count') return json({ count: count() });
@@ -129,10 +129,10 @@ const APPLE = `<svg width="20" height="22" viewBox="0 0 24 24" fill="currentColo
 
 const page = (n: number, hasApk: boolean) => `<!doctype html>
 <html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Écho : organisons-nous face à la répression</title>
-<meta name="description" content="Écho alerte les street medics quand quelqu'un est blessé en manifestation, sans internet.">
+<title>Brancard : organisons-nous face à la répression</title>
+<meta name="description" content="Brancard alerte les street medics quand quelqu'un est blessé en manifestation, sans internet.">
 <meta property="og:title" content="Organisons-nous face à la répression">
-<meta property="og:description" content="Écho alerte les street medics quand quelqu'un est blessé en manifestation, sans internet.">
+<meta property="og:description" content="Brancard alerte les street medics quand quelqu'un est blessé en manifestation, sans internet.">
 <meta name="theme-color" content="#0F1115">
 <style>
 *{box-sizing:border-box}
@@ -150,10 +150,10 @@ h1 span{color:#E5484D}
 footer{text-align:center;font-size:14px}
 footer a{color:#9BA1A6;text-decoration:none}
 </style></head><body><main>
-<div class="brand">${LOGO} Écho</div>
+<div class="brand">${LOGO} Brancard</div>
 <div class="hero">
 <h1>Organisons-nous face à <span>la répression.</span></h1>
-<p class="lead">Écho alerte les street medics quand quelqu'un est blessé en manifestation. Sans internet : les téléphones se transmettent l'alerte entre eux.</p>
+<p class="lead">Brancard alerte les street medics quand quelqu'un est blessé en manifestation. Sans internet : les téléphones se transmettent l'alerte entre eux.</p>
 ${hasApk
   ? `<a class="b android" href="/download">${ANDROID} TÉLÉCHARGER POUR ANDROID</a>`
   : `<div class="b off" aria-disabled="true">${ANDROID} ANDROID <small>bientôt</small></div>`}

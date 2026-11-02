@@ -1,4 +1,4 @@
-"""Écho app icons: a dot with echo waves, white on red. No red cross (protected emblem).
+"""Brancard app icons: a dot with echo waves, white on red. No red cross (protected emblem).
 Run: python3 -I assets/make_icons.py assets/"""
 import math
 import sys

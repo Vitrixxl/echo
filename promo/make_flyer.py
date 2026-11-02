@@ -1,4 +1,4 @@
-"""A4 sheet of 20 square cards (48 mm) to cut out and hand around: icon, one line on what Écho
+"""A4 sheet of 20 square cards (48 mm) to cut out and hand around: icon, one line on what Brancard
 does, a QR code to the download page. Vector PDF (crisp QR at any printer) + PNG preview.
 
 Usage: python3 -I make_flyer.py OUT.pdf [URL]      the A4 sheet (+ OUT.png preview)
@@ -7,7 +7,7 @@ Usage: python3 -I make_flyer.py OUT.pdf [URL]      the A4 sheet (+ OUT.png previ
 import json, os, subprocess, sys
 import cairo
 
-NAME = "Écho"
+NAME = "Brancard"
 HERE = os.path.dirname(os.path.abspath(__file__))
 MM = 72 / 25.4
 W, H = 210, 297

@@ -1,5 +1,5 @@
 /**
- * Deploy Écho: the server through pihost, then what phones download.
+ * Deploy Brancard: the server through pihost, then what phones download.
  *
  *   bun scripts/deploy.ts               server + over-the-air update
  *   bun scripts/deploy.ts --apk         also build the APK and publish it on the download page

@@ -1,6 +1,6 @@
 {
   "expo": {
-    "name": "Écho",
+    "name": "Brancard",
     "slug": "echo-alerte",
     "version": "1.0.0",
     "orientation": "portrait",
@@ -28,14 +28,14 @@
         "expo-nearby-connections",
         {
           "bonjourServicesName": "echo-alerte",
-          "localNetworkUsagePermissionText": "Écho relaie les alertes avec les téléphones proches, même sans réseau.",
-          "bluetoothUsagePermissionText": "Écho utilise le Bluetooth pour relayer les alertes sans réseau."
+          "localNetworkUsagePermissionText": "Brancard relaie les alertes avec les téléphones proches, même sans réseau.",
+          "bluetoothUsagePermissionText": "Brancard utilise le Bluetooth pour relayer les alertes sans réseau."
         }
       ],
       [
         "expo-location",
         {
-          "locationWhenInUsePermission": "Écho utilise ta position pour placer les alertes et (si tu es medic) te montrer sur la carte."
+          "locationWhenInUsePermission": "Brancard utilise ta position pour placer les alertes et (si tu es medic) te montrer sur la carte."
         }
       ],
       "@maplibre/maplibre-react-native"

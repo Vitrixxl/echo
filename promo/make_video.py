@@ -1,4 +1,4 @@
-"""Écho TikTok explainer, "carnet" style: dotted paper, red margin, hand-drawn pieces that
+"""Brancard TikTok explainer, "carnet" style: dotted paper, red margin, hand-drawn pieces that
 build up with the voice, word-by-word captions. 1080x1920, 30 fps, cairo -> ffmpeg.
 
 Usage: python3 -I make_video.py SHOTS_DIR OUT.mp4 TTS_PYTHON
@@ -242,7 +242,7 @@ def xmark(cr, s, color=RED, p=1.0):
 
 
 def echo_mark(cr, s, color=WHITE):
-    """The Écho logo (dot + echo waves) centered on origin, s = width. Same drawing as assets/make_icons.py."""
+    """The Brancard logo (dot + echo waves) centered on origin, s = width. Same drawing as assets/make_icons.py."""
     cr.set_source_rgb(*color)
     cr.arc(0, 0, s * 0.085, 0, 2 * math.pi)
     cr.fill()
@@ -335,7 +335,7 @@ def sc_intro(cr, l):
         sans(cr, 80)
         cr.set_source_rgb(*INK)
         cr.move_to(-60, 29)
-        cr.show_text("Écho")
+        cr.show_text("Brancard")
 
     # injured people first, then the app
     for i, x in enumerate((300, 560, 820)):
@@ -439,7 +439,7 @@ def sc_medic(cr, l):
 
 def sc_before(cr, l):
     pop(cr, l.p(0), CX, 410, lambda: note(cr, "avant la manif :", 76, INK), -0.03)
-    for i, (off, label) in enumerate(((1.4, "installer Écho"), (2.8, "télécharger la carte"))):
+    for i, (off, label) in enumerate(((1.4, "installer Brancard"), (2.8, "télécharger la carte"))):
         pop(cr, l.p(0, off - 0.6), 190, 590 + i * 140, lambda label=label, off=off: checkbox(cr, label, l.p(0, off, 0.5)))
 
 
@@ -555,7 +555,7 @@ def header(cr, right):
     hand(cr, 58)
     cr.set_source_rgb(*RED)
     cr.move_to(MX + 44, 228)
-    cr.show_text("écho")
+    cr.show_text("brancard")
     if right:
         sans(cr, 40)
         e = cr.text_extents(right)
@@ -639,7 +639,7 @@ def end_card(cr, p):
     cr.restore()
     cr.push_group()
     sans(cr, 104)
-    ctext(cr, "Écho", W / 2, 990, WHITE)
+    ctext(cr, "Brancard", W / 2, 990, WHITE)
     hand(cr, 70)
     ctext(cr, "lien en bio", W / 2, 1110, YELLOW)
     sans(cr, 26)

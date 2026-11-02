@@ -45,7 +45,7 @@ export async function searchCities(q: string): Promise<City[]> {
   const rows: any[] = await getJson(
     'https://nominatim.openstreetmap.org/search?format=jsonv2&limit=10&accept-language=fr&countrycodes=fr&featureType=city&q=' +
       encodeURIComponent(q.trim()),
-    { headers: { 'User-Agent': 'Echo/1.0 (offline street-medic alerts)' } },
+    { headers: { 'User-Agent': 'Brancard/1.0 (offline street-medic alerts)' } },
   );
   const out: City[] = [];
   for (const r of rows.filter((r) => r.addresstype in RANK).sort((a, b) => RANK[a.addresstype] - RANK[b.addresstype])) {

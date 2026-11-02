@@ -62,7 +62,7 @@ export default function App() {
     if (c) { await saveCity(c); setCity(c); } else setSkipped(true);
     const n = await installCount();
     if (n) setDialog({
-      title: n === 1 ? '1 personne a Écho' : `${n.toLocaleString('fr-FR')} personnes ont Écho`,
+      title: n === 1 ? '1 personne a installé Brancard' : `${n.toLocaleString('fr-FR')} personnes ont installé Brancard`,
       body: "L'alerte passe de téléphone en téléphone : plus on est nombreux dans le cortège, plus elle va loin. Fais-la installer autour de toi.",
       actions: [{ label: "C'est noté", color: C.red }],
     });
@@ -213,7 +213,7 @@ function RoleScreen({ onPick }: { onPick: (r: Role) => void }) {
   return (
     <View style={[s.role, { paddingTop: insets.top + 48, paddingBottom: insets.bottom + 24 }]}>
       <View style={s.logo}><Ionicons name="radio" size={38} color="#fff" /></View>
-      <Text style={s.h1}>Écho</Text>
+      <Text style={s.h1}>Brancard</Text>
       <Text style={s.sub}>Les alertes passent de téléphone en téléphone, même sans réseau. Plus on est nombreux, plus ça porte loin.</Text>
       <View style={{ flex: 1 }} />
       <RoleCard icon="medkit" color={C.green} title="Je suis street medic"
@@ -275,7 +275,7 @@ function MapScreen({ role, city, onSwitch }: { role: Role; city: City | null; on
     setDialog({
       icon: 'lock-open',
       title: 'Mode manif',
-      body: "Écho s'affiche dès que tu rallumes l'écran, sans déverrouiller. Le reste du téléphone reste verrouillé."
+      body: "Brancard s'affiche dès que tu rallumes l'écran, sans déverrouiller. Le reste du téléphone reste verrouillé."
         + (role === 'medic' ? '\n\nUne nouvelle alerte allume l\'écran.' : '')
         + "\n\nLe GPS et le relais des alertes restent actifs écran éteint : la batterie se vide plus vite.",
       actions: [{ label: 'Annuler' }, { label: 'Activer', color: C.red, onPress: () => set(true) }],
