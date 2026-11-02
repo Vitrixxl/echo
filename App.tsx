@@ -20,6 +20,7 @@ import { buildGraph, guidance, lengthM, shortestPath, type LngLat, type Turn } f
 const ROAD_LAYERS = ['highway_path', 'highway_minor', 'highway_major_inner', 'highway_major_subtle', 'road_pier'];
 const WALK_MPS = 1.25;
 const MANIF_KEY = 'echo.manif.v1';
+const NO_PAD = { top: 0, bottom: 0, left: 0, right: 0 };
 const OFF_ROUTE_M = 40; // further than this from the route: offer to recompute it
 const ARRIVED_M = 25;
 const TURN: Record<Turn, { icon: any; rot: string; label: string }> = {
@@ -308,7 +309,7 @@ function MapScreen({ role, city, onSwitch }: { role: Role; city: City | null; on
   }, []);
 
   const locate = async () => {
-    if (pos) return cam.current?.flyTo({ center: [pos.lon, pos.lat], zoom: 17.5, duration: 600 });
+    if (pos) return cam.current?.flyTo({ center: [pos.lon, pos.lat], zoom: going ? 18.5 : 17.5, duration: 600, padding: going ? navPad : NO_PAD });
     if (!(await startGps().catch(() => false)))
       setDialog({
         title: 'Position désactivée',
@@ -411,11 +412,14 @@ function MapScreen({ role, city, onSwitch }: { role: Role; city: City | null; on
 
   const focus = useCallback((r: MeshRecord) => {
     setSelected(r.id);
-    cam.current?.flyTo({ center: [r.lon, r.lat], zoom: 17.5, duration: 600 });
+    cam.current?.flyTo({ center: [r.lon, r.lat], zoom: 17.5, duration: 600, padding: NO_PAD });
   }, []);
 
   // ---- Offline router: frame both points, let the tiles render, read their streets, A* ----
   const rendered = useRef<(() => void) | null>(null);
+  // Padding keeps the medic in the clear area between the direction block and the alert card
+  // (camera padding sticks, so every other move resets it with NO_PAD).
+  const navPad = { top: insets.top + 190, bottom: 470, left: 0, right: 0 };
   const computeRoute = async (r: MeshRecord, zoomOnMe = false) => {
     const p = posRef.current;
     if (!p || !map.current || routing) return;
@@ -441,7 +445,7 @@ function MapScreen({ role, city, onSwitch }: { role: Role; city: City | null; on
     setRoute({ to: r.id, coords, m: lengthM(coords), exact: !!path });
     setRouting(false);
     // "J'y vais": once the route is read from the tiles, put the medic's own position up close.
-    if (zoomOnMe) cam.current?.flyTo({ center: from, zoom: 18.5, duration: 700 });
+    if (zoomOnMe) cam.current?.flyTo({ center: from, zoom: 18.5, duration: 700, padding: navPad });
   };
 
   const closeSheet = useCallback(() => setSheet(null), []);
@@ -480,7 +484,7 @@ function MapScreen({ role, city, onSwitch }: { role: Role; city: City | null; on
   return (
     <View style={{ flex: 1, backgroundColor: C.bg }}>
       <MapView ref={map} style={{ flex: 1 }} mapStyle={MAP_STYLE} logo={false} compass={false} androidView="texture"
-        attributionPosition={nav ? { top: screenH * 0.45, left: 12 } : { top: insets.top + 64, left: 12 }}
+        attributionPosition={nav ? { top: screenH * 0.3, left: 12 } : { top: insets.top + 64, left: 12 }}
         onPress={() => setSelected(null)}
         onDidFinishRenderingMapFully={() => { rendered.current?.(); rendered.current = null; }}
         onDidFinishLoadingMap={() => {
