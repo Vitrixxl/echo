@@ -7,7 +7,7 @@ import * as Location from 'expo-location';
 import * as Notifications from 'expo-notifications';
 import { StatusBar } from 'expo-status-bar';
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { ActivityIndicator, AppState, BackHandler, Keyboard, KeyboardAvoidingView, Linking, Pressable, ScrollView, StyleSheet, Text, TextInput, Vibration, View } from 'react-native';
+import { ActivityIndicator, AppState, BackHandler, Keyboard, KeyboardAvoidingView, Linking, Pressable, ScrollView, StyleSheet, Text, TextInput, useWindowDimensions, Vibration, View } from 'react-native';
 import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
 import Manif from './modules/manif';
 import { coverage, distanceM, type Alert as MeshRecord } from './src/alerts';
@@ -398,7 +398,8 @@ function MapScreen({ role, city, onSwitch }: { role: Role; city: City | null; on
   const nav = going && route?.to === going && pos ? route : null;
   const g = useMemo(() => (nav?.exact && pos ? guidance(nav.coords, [pos.lon, pos.lat]) : null), [nav, pos]);
   const goingTo = sos.find((r) => r.id === going);
-  const topH = nav ? 132 : 64; // banners sit under the top bar, or under the direction block
+  const topH = nav ? 186 : 64; // banners sit under the top bar, or under the direction block
+  const { height: screenH } = useWindowDimensions();
 
   const sel = sos.find((r) => r.id === selected) ?? null;
   const dist = (r: MeshRecord) => (pos ? distanceM(pos.lat, pos.lon, r.lat, r.lon) : 0);
@@ -479,7 +480,7 @@ function MapScreen({ role, city, onSwitch }: { role: Role; city: City | null; on
   return (
     <View style={{ flex: 1, backgroundColor: C.bg }}>
       <MapView ref={map} style={{ flex: 1 }} mapStyle={MAP_STYLE} logo={false} compass={false} androidView="texture"
-        attributionPosition={{ top: insets.top + topH, left: 12 }}
+        attributionPosition={nav ? { top: screenH * 0.45, left: 12 } : { top: insets.top + 64, left: 12 }}
         onPress={() => setSelected(null)}
         onDidFinishRenderingMapFully={() => { rendered.current?.(); rendered.current = null; }}
         onDidFinishLoadingMap={() => {
@@ -523,7 +524,7 @@ function MapScreen({ role, city, onSwitch }: { role: Role; city: City | null; on
         return (
           <View style={[s.nav, { top: insets.top + 8 }]}>
             <View style={s.navIcon}>
-              <Ionicons name={here ? 'flag' : !g ? 'navigate' : off ? 'help' : TURN[turn].icon} size={46} color="#fff"
+              <Ionicons name={here ? 'flag' : !g ? 'navigate' : off ? 'help' : TURN[turn].icon} size={64} color="#fff"
                 style={g && !off && !here ? { transform: [{ rotate: TURN[turn].rot }] } : undefined} />
             </View>
             <View style={{ flex: 1 }}>
@@ -561,7 +562,7 @@ function MapScreen({ role, city, onSwitch }: { role: Role; city: City | null; on
         </Pressable>
       </View>}
 
-      {mesh.error && (
+      {mesh.error && !nav && (
         <Pressable onPress={() => Linking.openSettings()} style={[s.err, { top: insets.top + topH }]}>
           <Ionicons name="bluetooth" size={18} color="#111" />
           <Text style={s.errText}>{mesh.error}</Text>
@@ -582,16 +583,18 @@ function MapScreen({ role, city, onSwitch }: { role: Role; city: City | null; on
 
       {/* Bottom: featured alert card + SOS button (always reachable) */}
       <View style={[s.bottom, { paddingBottom: insets.bottom + 16 }]} pointerEvents="box-none">
+        <View style={[s.row, { marginBottom: 12 }]} pointerEvents="box-none">
         {Manif && (
-          <Pressable style={({ pressed }) => [s.pill, { alignSelf: 'flex-end', marginBottom: 12 }, manif && { backgroundColor: C.red }, pressed && s.pressed]}
+          <Pressable style={({ pressed }) => [s.pill, manif && { backgroundColor: C.red }, pressed && s.pressed]}
             accessibilityRole="switch" accessibilityState={{ checked: manif }} onPress={toggleManif}>
             <Ionicons name="lock-open" size={18} color={C.text} />
             <Text style={s.pillText}>{manif ? 'Mode manif activé' : 'Mode manif'}</Text>
           </Pressable>
         )}
-        <Pressable style={({ pressed }) => [s.round, { alignSelf: 'flex-end', marginBottom: 12 }, pressed && s.pressed]} accessibilityLabel="Me recentrer" onPress={locate}>
+        <Pressable style={({ pressed }) => [s.round, { marginLeft: 'auto' }, pressed && s.pressed]} accessibilityLabel="Me recentrer" onPress={locate}>
           <Ionicons name="locate" size={20} color={C.text} />
         </Pressable>
+        </View>
         {featured && (() => {
           const c = cov.get(featured.id)!;
           const mine = mesh.mine.includes(featured.id);
@@ -794,11 +797,11 @@ const s = StyleSheet.create({
 
   dialogWrap: { flex: 1, justifyContent: 'center', padding: 24 },
   dialog: { backgroundColor: C.card, borderRadius: 24, padding: 18, ...shadow },
-  nav: { position: 'absolute', left: 12, right: 12, minHeight: 116, flexDirection: 'row', alignItems: 'center', gap: 14, backgroundColor: C.blue, borderRadius: 24, padding: 16, ...shadow },
-  navIcon: { width: 72, height: 72, borderRadius: 20, backgroundColor: '#ffffff26', alignItems: 'center', justifyContent: 'center' },
-  navBig: { color: '#fff', fontSize: 30, fontWeight: '900' },
-  navText: { color: '#fff', fontSize: 17, fontWeight: '700', marginTop: 2 },
-  navMeta: { color: '#ffffffCC', fontSize: 14, marginTop: 4 },
+  nav: { position: 'absolute', left: 12, right: 12, minHeight: 168, flexDirection: 'row', alignItems: 'center', gap: 16, backgroundColor: C.blue, borderRadius: 28, padding: 20, ...shadow },
+  navIcon: { width: 96, height: 96, borderRadius: 24, backgroundColor: '#ffffff26', alignItems: 'center', justifyContent: 'center' },
+  navBig: { color: '#fff', fontSize: 44, fontWeight: '900' },
+  navText: { color: '#fff', fontSize: 21, fontWeight: '800', marginTop: 2 },
+  navMeta: { color: '#ffffffD9', fontSize: 15, marginTop: 6 },
   dialogIcon: { width: 64, height: 64, borderRadius: 20, backgroundColor: C.red, alignItems: 'center', justifyContent: 'center', marginRight: 4 },
   dialogBody: { color: C.muted, fontSize: 15, lineHeight: 21, marginTop: 8 },
   bar: { height: 10, borderRadius: 5, backgroundColor: C.line, marginTop: 14, overflow: 'hidden' },
