@@ -59,7 +59,7 @@ def png(name, size, bg=None, mark=0.0, color=(1, 1, 1), radius=0.0):
 if __name__ == "__main__":
     out = sys.argv[1]
     png("icon.png", 1024, RED, 0.62)
-    png("splash-icon.png", 1024, None, 0.5, RED)
+    png("splash-icon.png", 1024, RED, 0.62, radius=0.22)  # red tile: never the mark in red on white
     png("favicon.png", 48, RED, 0.62, radius=0.2)
     png("android-icon-background.png", 512, RED)
     png("android-icon-foreground.png", 512, None, 0.42)  # adaptive icons crop to the inner ~66 %

@@ -20,7 +20,7 @@ import wave
 import cairo
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "assets"))
-from make_icons import stretcher  # noqa: E402  (the app mark, one drawing everywhere)
+from make_icons import rrect, stretcher  # noqa: E402  (the app mark, one drawing everywhere)
 
 W, H, FPS = 1080, 1920, 30
 PAPER = (0.988, 0.986, 0.978)
@@ -625,11 +625,12 @@ def end_card(cr, p):
     cr.save()
     cr.translate(W / 2, 760)
     cr.scale(0.85 + 0.15 * a, 0.85 + 0.15 * a)
-    cr.set_source_rgba(1, 1, 1, a)
-    cr.rectangle(-90, -90, 180, 180)
-    cr.fill()
+    # Red tile, white mark, like the app icon: never a red cross on white (the Red Cross emblem).
     cr.push_group()
-    echo_mark(cr, 150, RED)
+    cr.set_source_rgb(*RED)
+    rrect(cr, -90, -90, 180, 180, 43)
+    cr.fill()
+    echo_mark(cr, 112, WHITE)
     cr.pop_group_to_source()
     cr.paint_with_alpha(a)
     cr.restore()
