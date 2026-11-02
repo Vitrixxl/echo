@@ -763,18 +763,11 @@ function MapScreen({ role, city, onSwitch }: { role: Role; city: City | null; on
           const note = shownNote(featured.note);
           return (
             <Pressable style={[s.card, { marginBottom: 10 }]} onPress={() => focus(featured)}>
-              <View style={s.row}>
+              {/* One line: what (or "Ton alerte"), distance and age, who's coming / there. */}
+              <View style={s.row} accessibilityLabel={featuredLabel}>
                 <View style={[s.dot, { backgroundColor: tone(c) }]} />
-                <Text style={[s.cardTitle, { flex: 1 }]} numberOfLines={1}>{featuredLabel}</Text>
-                <Text style={s.cardMeta} numberOfLines={1}>{describe(featured, pos)}</Text>
-                {sel && (
-                  <Pressable onPress={() => setSelected(null)} hitSlop={14} accessibilityLabel="Fermer">
-                    <Ionicons name="close" size={20} color={C.muted} />
-                  </Pressable>
-                )}
-              </View>
-              <View style={[s.row, { marginTop: 8 }]}>
-                <Text style={[s.cardNote, { flex: 1 }]} numberOfLines={1}>{note || ' '}</Text>
+                <Text style={[s.cardTitle, { flexShrink: 1 }]} numberOfLines={1}>{mine ? 'Ton alerte' : note || 'Alerte'}</Text>
+                <Text style={[s.cardMeta, { flex: 1 }]} numberOfLines={1}>{describe(featured, pos)}</Text>
                 <View style={s.stat}><Ionicons name="walk" size={13} color={C.orange} /><Text style={s.statText}>{c.enRoute}</Text></View>
                 <View style={s.stat}><Ionicons name="medkit" size={13} color={C.green} /><Text style={s.statText}>{c.onSite}</Text></View>
                 {(routing || r) && (
@@ -783,11 +776,16 @@ function MapScreen({ role, city, onSwitch }: { role: Role; city: City | null; on
                     <Text style={s.statText}>{routing ? '…' : `${Math.max(1, Math.round(r!.m / WALK_MPS / 60))} min`}</Text>
                   </View>
                 )}
+                {sel && (
+                  <Pressable onPress={() => setSelected(null)} hitSlop={14} accessibilityLabel="Fermer">
+                    <Ionicons name="close" size={20} color={C.muted} />
+                  </Pressable>
+                )}
               </View>
               {!!states.get(featured.id)?.help && <Text style={[s.hint, { color: C.red }]}>Renfort demandé par un medic sur place</Text>}
               {!states.get(featured.id)?.help && !!states.get(featured.id)?.care && <Text style={[s.hint, { color: C.green }]}>Pris en charge par un medic sur place</Text>}
               {mine && mesh.peerCount === 0 && <Text style={[s.hint, { color: C.orange }]}>Pas encore transmise : aucun téléphone à portée</Text>}
-              <View style={[s.row, { marginTop: 10 }]}>
+              <View style={[s.row, { marginTop: 8 }]}>
                 {role === 'medic' && !mine && (going === featured.id
                   ? <Btn small label="Je n'y vais plus" color={C.line} onPress={() => { setGoing(null); setRoute(null); }} />
                   : <Btn small label="J'y vais" color={C.orange} onPress={() => { setGoing(featured.id); computeRoute(featured, true); }} />)}
