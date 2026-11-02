@@ -98,6 +98,12 @@
         }
       ],
       "@maplibre/maplibre-react-native"
-    ]
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "523afcd0-08b1-4a33-b9e2-f294eeeaea49"
+      }
+    },
+    "owner": "vitrixx"
   }
 }
