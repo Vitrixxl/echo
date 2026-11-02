@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test';
-import { buildGraph, lengthM, shortestPath, type LngLat } from './route';
+import { buildGraph, guidance, lengthM, shortestPath, type LngLat } from './route';
 
 // ~100 m blocks around Paris. Streets: a U shape from A to B, plus a dead end.
 const o: LngLat = [2.35, 48.85];
@@ -32,4 +32,32 @@ test('T-junction whose shared vertex was simplified away still connects', () => 
   const p = shortestPath(buildGraph(lines), at(0, 0), at(2, 2));
   expect(p).not.toBeNull();
   expect(lengthM(p!)).toBeLessThan(430); // 200 along + ~200 up, no detour
+});
+
+test('guidance: next turn, its side and distance, ignoring street curves', () => {
+  // North 200 m (with a slight 3 m wiggle), then east 100 m: a right turn 200 m ahead.
+  const r: LngLat[] = [at(0, 0), at(0.01, 0.5), at(0, 1), at(0.01, 1.5), at(0, 2), at(1, 2)];
+  const g = guidance(r, at(0, 0))!;
+  expect(g.turn).toBe('right');
+  expect(Math.abs(g.toTurnM - 200)).toBeLessThan(8);
+  expect(Math.abs(g.leftM - 300)).toBeLessThan(10);
+  expect(g.offM).toBeLessThan(1);
+  // Same route walked the other way: left turn 100 m ahead.
+  expect(guidance([...r].reverse(), at(1, 2))!.turn).toBe('left');
+  // Past the corner: nothing but the destination left; 30 m off to the side is reported.
+  const end = guidance(r, at(0.5, 2.3))!;
+  expect(end.turn).toBe('arrive');
+  expect(Math.abs(end.leftM - 50)).toBeLessThan(5);
+  expect(Math.abs(end.offM - 27)).toBeLessThan(3);
+});
+
+test('starts on the street segment, not at a vertex behind the walker', () => {
+  // One long street 400 m with vertices only at its ends, then a turn north at the far end.
+  const g = buildGraph([[at(0, 0), at(4, 0), at(4, 1)]]);
+  // Walker 150 m along, 2 m off the street: the nearest vertex (the street's start) is behind them.
+  const p = shortestPath(g, at(1.5, 0.02), at(4, 1))!;
+  expect(lengthM(p)).toBeLessThan(250 * 1.0 + 100 + 10); // 250 m east + 100 m north, no walking back
+  const gd = guidance(p, at(1.5, 0.02))!;
+  expect(gd.turn).toBe('left');
+  expect(Math.abs(gd.toTurnM - 250)).toBeLessThan(10);
 });

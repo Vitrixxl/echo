@@ -14,12 +14,22 @@ import { coverage, distanceM, type Alert as MeshRecord } from './src/alerts';
 import { ensurePermissions, useMesh } from './src/mesh';
 import { MAP_STYLE } from './src/mapStyle';
 import { center, downloadCity, installCount, loadCity, saveCity, searchCities, type City } from './src/onboarding';
-import { buildGraph, lengthM, shortestPath, type LngLat } from './src/route';
+import { buildGraph, guidance, lengthM, shortestPath, type LngLat, type Turn } from './src/route';
 
 // Walkable road layers of that style; the router reads their geometry from tiles on the phone.
 const ROAD_LAYERS = ['highway_path', 'highway_minor', 'highway_major_inner', 'highway_major_subtle', 'road_pier'];
 const WALK_MPS = 1.25;
 const MANIF_KEY = 'echo.manif.v1';
+const OFF_ROUTE_M = 40; // further than this from the route: offer to recompute it
+const ARRIVED_M = 25;
+const TURN: Record<Turn, { icon: any; rot: string; label: string }> = {
+  left: { icon: 'arrow-back', rot: '0deg', label: 'Tourne à gauche' },
+  right: { icon: 'arrow-forward', rot: '0deg', label: 'Tourne à droite' },
+  'slight-left': { icon: 'arrow-up', rot: '-45deg', label: 'Légèrement à gauche' },
+  'slight-right': { icon: 'arrow-up', rot: '45deg', label: 'Légèrement à droite' },
+  uturn: { icon: 'arrow-undo', rot: '0deg', label: 'Fais demi-tour' },
+  arrive: { icon: 'arrow-up', rot: '0deg', label: "Tout droit jusqu'à l'urgence" },
+};
 const C = {
   bg: '#0F1115', card: '#171A21', line: '#262A33', text: '#F2F4F7', muted: '#9BA1A6',
   red: '#E5484D', orange: '#F5A524', green: '#30A46C', blue: '#3E8EF7',
@@ -30,7 +40,7 @@ const TAGS = ['Blessure', 'Saignement', 'Gaz lacrymo', 'Malaise', 'Inconscient',
 
 type Role = 'medic' | 'civil';
 type Pos = { lat: number; lon: number };
-type Dialog = { title: string; body?: string; icon?: any; actions: { label: string; color?: string; onPress?: () => void }[] };
+type Dialog = { title: string; body?: string; icon?: any; tone?: string; actions: { label: string; color?: string; onPress?: () => void }[] };
 type Route = { to: string; coords: LngLat[]; m: number; exact: boolean };
 
 export default function App() {
@@ -176,7 +186,7 @@ function DialogModal({ dialog, onClose }: { dialog: Dialog | null; onClose: () =
         <Pressable style={StyleSheet.absoluteFill} onPress={onClose} />
         <View style={s.dialog}>
           <View style={s.row}>
-            {dialog.icon && <View style={s.dialogIcon}><Ionicons name={dialog.icon} size={36} color="#fff" /></View>}
+            {dialog.icon && <View style={[s.dialogIcon, { backgroundColor: dialog.tone ?? C.red }]}><Ionicons name={dialog.icon} size={36} color="#fff" /></View>}
             <Text style={[s.sheetTitle, { flex: 1 }]}>{dialog.title}</Text>
           </View>
           {!!dialog.body && <Text style={s.dialogBody}>{dialog.body}</Text>}
@@ -372,11 +382,23 @@ function MapScreen({ role, city, onSwitch }: { role: Role; city: City | null; on
     [route],
   );
 
-  // Forget "J'y vais" and the route once their SOS is gone.
+  // The SOS I'm heading to was closed by someone else (resolved or cancelled): tell me, stop the route.
   useEffect(() => {
-    if (going && !sos.some((r) => r.id === going)) setGoing(null);
+    if (going && !sos.some((r) => r.id === going)) {
+      setGoing(null);
+      const body = "L'alerte vers laquelle tu allais a été clôturée : résolue par un medic ou annulée par la personne.";
+      Vibration.vibrate([0, 300, 150, 300]);
+      setDialog({ icon: 'checkmark-circle', tone: C.green, title: 'Intervention terminée', body, actions: [{ label: 'OK', color: C.green }] });
+      if (AppState.currentState !== 'active')
+        Notifications.scheduleNotificationAsync({ content: { title: 'Intervention terminée', body }, trigger: { channelId: 'sos' } }).catch(() => {});
+    }
     if (route && !sos.some((r) => r.id === route.to)) setRoute(null);
   }, [sos]);
+
+  const nav = going && route?.to === going && pos ? route : null;
+  const g = useMemo(() => (nav?.exact && pos ? guidance(nav.coords, [pos.lon, pos.lat]) : null), [nav, pos]);
+  const goingTo = sos.find((r) => r.id === going);
+  const topH = nav ? 132 : 64; // banners sit under the top bar, or under the direction block
 
   const sel = sos.find((r) => r.id === selected) ?? null;
   const dist = (r: MeshRecord) => (pos ? distanceM(pos.lat, pos.lon, r.lat, r.lon) : 0);
@@ -431,15 +453,20 @@ function MapScreen({ role, city, onSwitch }: { role: Role; city: City | null; on
     setSheet(null);
   };
 
+  const close = (id: string) => {
+    if (going === id) { setGoing(null); setRoute(null); }
+    mesh.setStatus(id, 'done');
+    setSelected(null);
+  };
   const resolve = (id: string) => setDialog({
     title: 'Urgence résolue ?',
     body: "L'alerte disparaîtra de la carte de tout le monde.",
-    actions: [{ label: 'Non' }, { label: 'Oui, résolu', color: C.green, onPress: () => { mesh.setStatus(id, 'done'); setSelected(null); } }],
+    actions: [{ label: 'Non' }, { label: 'Oui, résolu', color: C.green, onPress: () => close(id) }],
   });
   const cancelMine = (id: string) => setDialog({
     title: 'Annuler ton alerte ?',
     body: 'Les medics ne viendront plus pour cette alerte.',
-    actions: [{ label: 'Non' }, { label: 'Oui, annuler', color: C.red, onPress: () => { mesh.setStatus(id, 'done'); setSelected(null); } }],
+    actions: [{ label: 'Non' }, { label: 'Oui, annuler', color: C.red, onPress: () => close(id) }],
   });
 
   const cityDownloaded = (c: City | null) => {
@@ -452,7 +479,7 @@ function MapScreen({ role, city, onSwitch }: { role: Role; city: City | null; on
   return (
     <View style={{ flex: 1, backgroundColor: C.bg }}>
       <MapView ref={map} style={{ flex: 1 }} mapStyle={MAP_STYLE} logo={false} compass={false} androidView="texture"
-        attributionPosition={{ top: insets.top + 64, left: 12 }}
+        attributionPosition={{ top: insets.top + topH, left: 12 }}
         onPress={() => setSelected(null)}
         onDidFinishRenderingMapFully={() => { rendered.current?.(); rendered.current = null; }}
         onDidFinishLoadingMap={() => {
@@ -487,8 +514,34 @@ function MapScreen({ role, city, onSwitch }: { role: Role; city: City | null; on
         })}
       </MapView>
 
+      {/* Heading to an SOS: big direction block instead of the status bar */}
+      {nav && (() => {
+        const off = g && g.offM > OFF_ROUTE_M;
+        const here = g ? g.leftM < ARRIVED_M : goingTo && distanceM(pos!.lat, pos!.lon, goingTo.lat, goingTo.lon) < ARRIVED_M;
+        const turn: Turn = here ? 'arrive' : g?.turn ?? 'arrive';
+        const leftM = g?.leftM ?? (goingTo ? distanceM(pos!.lat, pos!.lon, goingTo.lat, goingTo.lon) : nav.m);
+        return (
+          <View style={[s.nav, { top: insets.top + 8 }]}>
+            <View style={s.navIcon}>
+              <Ionicons name={here ? 'flag' : !g ? 'navigate' : off ? 'help' : TURN[turn].icon} size={46} color="#fff"
+                style={g && !off && !here ? { transform: [{ rotate: TURN[turn].rot }] } : undefined} />
+            </View>
+            <View style={{ flex: 1 }}>
+              {here ? <Text style={s.navBig}>Tu es arrivé·e</Text>
+                : off ? <Text style={s.navBig}>Hors du chemin</Text>
+                : <Text style={s.navBig}>{fmtM(g ? g.toTurnM : leftM)}</Text>}
+              <Text style={s.navText}>
+                {here ? 'La personne est à moins de 25 m' : !g ? "À vol d'oiseau, pas de rue sur la carte" : off ? `Tu es à ${fmtM(g.offM)} de l'itinéraire` : TURN[turn].label}
+              </Text>
+              {!here && <Text style={s.navMeta}>Arrivée · {Math.max(1, Math.round(leftM / WALK_MPS / 60))} min · {fmtM(leftM)}</Text>}
+            </View>
+            {off && goingTo && <Btn icon="refresh" a11y="Recalculer l'itinéraire" color="#ffffff33" busy={routing} onPress={() => computeRoute(goingTo, true)} />}
+          </View>
+        );
+      })()}
+
       {/* Top status bar */}
-      <View style={[s.top, { top: insets.top + 8 }]} pointerEvents="box-none">
+      {!nav && <View style={[s.top, { top: insets.top + 8 }]} pointerEvents="box-none">
         <Pressable style={({ pressed }) => [s.pill, pressed && s.pressed]} onPress={onSwitch} accessibilityLabel="Changer de rôle">
           <View style={[s.dot, { backgroundColor: role === 'medic' ? C.green : C.blue }]} />
           <Text style={s.pillText}>{role === 'medic' ? 'Medic' : 'Civil'}</Text>
@@ -506,17 +559,17 @@ function MapScreen({ role, city, onSwitch }: { role: Role; city: City | null; on
         <Pressable style={({ pressed }) => [s.round, pressed && s.pressed]} onPress={() => setCityOpen(true)} accessibilityLabel="Télécharger la carte d'une ville">
           <Ionicons name="cloud-download-outline" size={20} color={C.text} />
         </Pressable>
-      </View>
+      </View>}
 
       {mesh.error && (
-        <Pressable onPress={() => Linking.openSettings()} style={[s.err, { top: insets.top + 64 }]}>
+        <Pressable onPress={() => Linking.openSettings()} style={[s.err, { top: insets.top + topH }]}>
           <Ionicons name="bluetooth" size={18} color="#111" />
           <Text style={s.errText}>{mesh.error}</Text>
         </Pressable>
       )}
 
       {mesh.incoming && role === 'medic' && (
-        <Pressable style={[s.banner, { top: insets.top + 64 }]}
+        <Pressable style={[s.banner, { top: insets.top + topH }]}
           onPress={() => { focus(mesh.incoming!); mesh.clearIncoming(); }}>
           <Ionicons name="warning" size={22} color="#fff" />
           <View style={{ flex: 1 }}>
@@ -530,9 +583,10 @@ function MapScreen({ role, city, onSwitch }: { role: Role; city: City | null; on
       {/* Bottom: featured alert card + SOS button (always reachable) */}
       <View style={[s.bottom, { paddingBottom: insets.bottom + 16 }]} pointerEvents="box-none">
         {Manif && (
-          <Pressable style={({ pressed }) => [s.round, { alignSelf: 'flex-end', marginBottom: 12 }, manif && { backgroundColor: C.red }, pressed && s.pressed]}
-            accessibilityLabel="Mode manif" accessibilityState={{ checked: manif }} onPress={toggleManif}>
-            <Ionicons name="lock-open" size={20} color={C.text} />
+          <Pressable style={({ pressed }) => [s.pill, { alignSelf: 'flex-end', marginBottom: 12 }, manif && { backgroundColor: C.red }, pressed && s.pressed]}
+            accessibilityRole="switch" accessibilityState={{ checked: manif }} onPress={toggleManif}>
+            <Ionicons name="lock-open" size={18} color={C.text} />
+            <Text style={s.pillText}>{manif ? 'Mode manif activé' : 'Mode manif'}</Text>
           </Pressable>
         )}
         <Pressable style={({ pressed }) => [s.round, { alignSelf: 'flex-end', marginBottom: 12 }, pressed && s.pressed]} accessibilityLabel="Me recentrer" onPress={locate}>
@@ -740,6 +794,11 @@ const s = StyleSheet.create({
 
   dialogWrap: { flex: 1, justifyContent: 'center', padding: 24 },
   dialog: { backgroundColor: C.card, borderRadius: 24, padding: 18, ...shadow },
+  nav: { position: 'absolute', left: 12, right: 12, minHeight: 116, flexDirection: 'row', alignItems: 'center', gap: 14, backgroundColor: C.blue, borderRadius: 24, padding: 16, ...shadow },
+  navIcon: { width: 72, height: 72, borderRadius: 20, backgroundColor: '#ffffff26', alignItems: 'center', justifyContent: 'center' },
+  navBig: { color: '#fff', fontSize: 30, fontWeight: '900' },
+  navText: { color: '#fff', fontSize: 17, fontWeight: '700', marginTop: 2 },
+  navMeta: { color: '#ffffffCC', fontSize: 14, marginTop: 4 },
   dialogIcon: { width: 64, height: 64, borderRadius: 20, backgroundColor: C.red, alignItems: 'center', justifyContent: 'center', marginRight: 4 },
   dialogBody: { color: C.muted, fontSize: 15, lineHeight: 21, marginTop: 8 },
   bar: { height: 10, borderRadius: 5, backgroundColor: C.line, marginTop: 14, overflow: 'hidden' },

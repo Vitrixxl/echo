@@ -89,18 +89,39 @@ function joinDeadEnds(nodes: LngLat[], adj: Graph['adj']) {
   }
 }
 
-/** A* from the road point nearest `from` to the one nearest `to`. Null if unreachable. */
-export function shortestPath(g: Graph, from: LngLat, to: LngLat): LngLat[] | null {
-  const nearest = (p: LngLat) => {
-    let best = -1, bd = Infinity;
-    g.nodes.forEach((n, i) => { const x = d(n, p); if (x < bd) { bd = x; best = i; } });
-    return bd <= MAX_SNAP_M ? best : -1;
-  };
-  const s = nearest(from), t = nearest(to);
-  if (s < 0 || t < 0) return null;
+/** Closest point on any street segment (not just the closest vertex: on a long straight street
+ *  that vertex can be behind you, and the route would start by walking back to it). */
+function snap(g: Graph, p: LngLat) {
+  const k = Math.cos((p[1] * Math.PI) / 180);
+  type Snap = { u: number; v: number; q: LngLat; m: number };
+  let best: Snap | null = null as Snap | null;
+  g.adj.forEach((es, u) => es.forEach(({ to: v }) => {
+    if (u > v) return;
+    const [a, b] = [g.nodes[u], g.nodes[v]];
+    const dx = (b[0] - a[0]) * k, dy = b[1] - a[1], L = dx * dx + dy * dy;
+    const s = L ? Math.max(0, Math.min(1, ((p[0] - a[0]) * k * dx + (p[1] - a[1]) * dy) / L)) : 0;
+    const q: LngLat = [a[0] + s * (b[0] - a[0]), a[1] + s * (b[1] - a[1])];
+    const m = d(q, p);
+    if (!best || m < best.m) best = { u, v, q, m };
+  }));
+  return best && best.m <= MAX_SNAP_M ? best : null;
+}
 
-  const dist = new Float64Array(g.nodes.length).fill(Infinity);
-  const prev = new Int32Array(g.nodes.length).fill(-1);
+/** A* from the street point nearest `from` to the one nearest `to`. Null if unreachable. */
+export function shortestPath(g: Graph, from: LngLat, to: LngLat): LngLat[] | null {
+  const a = snap(g, from), b = snap(g, to);
+  if (!a || !b) return null;
+  // Two extra nodes on their segments: s (start) and t (target).
+  const s = g.nodes.length, t = s + 1;
+  const node = (i: number) => (i < s ? g.nodes[i] : i === s ? a.q : b.q);
+  const extra = new Map<number, { to: number; w: number }[]>();
+  const link = (u: number, v: number) => { const w = d(node(u), node(v)); extra.set(u, [...(extra.get(u) ?? []), { to: v, w }]); };
+  link(s, a.u); link(s, a.v); link(b.u, t); link(b.v, t);
+  if (Math.min(a.u, a.v) === Math.min(b.u, b.v) && Math.max(a.u, a.v) === Math.max(b.u, b.v)) link(s, t); // same segment
+  const edges = (i: number) => [...(g.adj[i] ?? []), ...(extra.get(i) ?? [])];
+
+  const dist = new Float64Array(g.nodes.length + 2).fill(Infinity);
+  const prev = new Int32Array(g.nodes.length + 2).fill(-1);
   const heap: [number, number][] = []; // [f-score, node], binary min-heap
   const push = (f: number, n: number) => {
     heap.push([f, n]);
@@ -129,23 +150,23 @@ export function shortestPath(g: Graph, from: LngLat, to: LngLat): LngLat[] | nul
   };
 
   dist[s] = 0;
-  push(d(g.nodes[s], g.nodes[t]), s);
+  push(d(node(s), node(t)), s);
   while (heap.length) {
     const [f, u] = pop();
     if (u === t) break;
-    if (f - d(g.nodes[u], g.nodes[t]) > dist[u] + 1e-9) continue; // stale entry
-    for (const { to, w } of g.adj[u]) {
+    if (f - d(node(u), node(t)) > dist[u] + 1e-9) continue; // stale entry
+    for (const { to, w } of edges(u)) {
       const nd = dist[u] + w;
       if (nd < dist[to]) {
         dist[to] = nd;
         prev[to] = u;
-        push(nd + d(g.nodes[to], g.nodes[t]), to);
+        push(nd + d(node(to), node(t)), to);
       }
     }
   }
   if (dist[t] === Infinity) return null;
   const path: LngLat[] = [to];
-  for (let n = t; n >= 0; n = prev[n]) path.push(g.nodes[n]);
+  for (let n = t; n >= 0; n = prev[n]) path.push(node(n));
   path.push(from);
   return path.reverse();
 }
@@ -154,4 +175,59 @@ export function lengthM(path: LngLat[]) {
   let m = 0;
   for (let i = 1; i < path.length; i++) m += d(path[i - 1], path[i]);
   return m;
+}
+
+export type Turn = 'left' | 'right' | 'slight-left' | 'slight-right' | 'uturn' | 'arrive';
+export type Guidance = { turn: Turn; toTurnM: number; leftM: number; offM: number };
+
+const TURN_DEG = 30; // smaller bends are just the street curving
+const SIMPLIFY_M = 6; // flattens the many small vertices of curved streets
+
+/** Turn-by-turn from where the walker is: next real turn on the route, its distance,
+ *  what's left to walk, and how far the walker is from the route (to offer a new one). */
+export function guidance(route: LngLat[], at: LngLat): Guidance | null {
+  if (route.length < 2) return null;
+  // Local metres around the walker (accurate enough over a few km).
+  const kx = 111320 * Math.cos((at[1] * Math.PI) / 180), ky = 110540;
+  const xy = route.map(([lon, lat]) => [(lon - at[0]) * kx, (lat - at[1]) * ky]);
+  let best = Infinity, seg = 0, proj = xy[0];
+  for (let i = 0; i + 1 < xy.length; i++) {
+    const [ax, ay] = xy[i], [bx, by] = xy[i + 1];
+    const L = (bx - ax) ** 2 + (by - ay) ** 2;
+    const t = L ? Math.max(0, Math.min(1, -(ax * (bx - ax) + ay * (by - ay)) / L)) : 0;
+    const p = [ax + t * (bx - ax), ay + t * (by - ay)];
+    const dd = Math.hypot(p[0], p[1]);
+    if (dd < best) { best = dd; seg = i; proj = p; }
+  }
+  const ahead = simplify([proj, ...xy.slice(seg + 1)]);
+  let walked = 0, turn: Turn = 'arrive', toTurnM = -1;
+  for (let k = 1; k < ahead.length; k++) {
+    const [a, b] = [ahead[k - 1], ahead[k]];
+    const len = Math.hypot(b[0] - a[0], b[1] - a[1]);
+    if (toTurnM < 0 && k + 1 < ahead.length && walked + len > 0) {
+      const c = ahead[k + 1];
+      const deg = ((Math.atan2(c[0] - b[0], c[1] - b[1]) - Math.atan2(b[0] - a[0], b[1] - a[1])) * 180) / Math.PI;
+      const delta = ((deg + 540) % 360) - 180; // > 0: clockwise, i.e. to the right
+      const abs = Math.abs(delta);
+      if (abs >= TURN_DEG) {
+        turn = abs > 150 ? 'uturn' : abs < 60 ? (delta > 0 ? 'slight-right' : 'slight-left') : delta > 0 ? 'right' : 'left';
+        toTurnM = walked + len;
+      }
+    }
+    walked += len;
+  }
+  return { turn, toTurnM: toTurnM < 0 ? walked : toTurnM, leftM: walked, offM: best };
+}
+
+// Douglas-Peucker on [x, y] metres.
+function simplify(p: number[][]): number[][] {
+  if (p.length < 3) return p;
+  const [a, b] = [p[0], p[p.length - 1]];
+  const L = Math.hypot(b[0] - a[0], b[1] - a[1]);
+  let far = 0, at = 0;
+  for (let i = 1; i < p.length - 1; i++) {
+    const dd = L ? Math.abs((b[0] - a[0]) * (a[1] - p[i][1]) - (a[0] - p[i][0]) * (b[1] - a[1])) / L : Math.hypot(p[i][0] - a[0], p[i][1] - a[1]);
+    if (dd > far) { far = dd; at = i; }
+  }
+  return far <= SIMPLIFY_M ? [a, b] : [...simplify(p.slice(0, at + 1)).slice(0, -1), ...simplify(p.slice(at))];
 }
