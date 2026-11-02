@@ -75,23 +75,23 @@ def qrcode(cr, x, y, s, qr, quiet=1):
         if on:
             cr.rectangle(x + m * (quiet + i % n), y + m * (quiet + i // n), m * 1.02, m * 1.02)
     cr.fill()
-    # Icon in the centre on a white plate: ~7 % of the code's area, well within level H's margin.
-    k = round(n * 0.26) | 1  # odd number of modules so it sits on the grid, centred
-    px, py = x + m * (quiet + (n - k) / 2), y + m * (quiet + (n - k) / 2)
+    # Icon as a badge on the bottom-right corner (the one without a finder pattern): centred on the
+    # corner point, it hides only ~3x3 modules, which level H recovers.
+    b = m * 7
+    cx, cy = x + m * (quiet + n), y + m * (quiet + n)
     cr.set_source_rgb(1, 1, 1)
-    rrect(cr, px, py, m * k, m * k, m * k * 0.24)
+    rrect(cr, cx - b / 2, cy - b / 2, b, b, b * 0.26)
     cr.fill()
-    icon(cr, px + m * 0.6, py + m * 0.6, m * (k - 1.2))
+    icon(cr, cx - b / 2 + m * 0.6, cy - b / 2 + m * 0.6, b - m * 1.2)
 
 
 def card(cr, x, y):
-    p = 4
-    icon(cr, x + p, y + p, 8)
-    text(cr, NAME, x + p + 10.5, y + p + 6.1, 14)
-    text(cr, "Alerte les street medics\nautour de toi,\nmême sans réseau.", x + p, y + 17, 8.5, width=CARD - 2 * p, lead=1.22)
-    qrcode(cr, x + p - 0.6, y + 27, 18, SITE)
-    b = text(cr, "Installe-la avant la manif", x + 23.5, y + 33, 7.5, width=20)
-    text(cr, "echo.vitrixxl.fr", x + 23.5, b + 1.2, 6.5, bold=False, color=(0.3, 0.3, 0.32))
+    p = 3.5
+    icon(cr, x + p, y + p, 7)
+    text(cr, NAME, x + p + 9, y + p + 5.4, 13)
+    text(cr, "Alerte les street medics\nautour de toi,\nmême sans réseau.", x + p, y + 14.2, 8, width=CARD - 2 * p, lead=1.18)
+    qrcode(cr, x + p - 0.7, y + 21.8, 22, SITE)
+    text(cr, "Installe-la avant la manif", x + 28.5, y + 31, 7.5, width=CARD - 28.5 - p)
 
 
 def page(surface, k=1):

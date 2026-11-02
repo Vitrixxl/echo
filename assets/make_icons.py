@@ -23,7 +23,7 @@ def stretcher(cr, cx, cy, s, color=(1, 1, 1)):
     cy += s * 0.08  # balance the plus above against the legs below
     lw = s * 0.07
     arm, th = s * 0.13, s * 0.085
-    px, py = cx + s * 0.08, cy - s * 0.36
+    px, py = cx, cy - s * 0.36
     rrect(cr, px - th / 2, py - arm, th, arm * 2, th / 2)
     rrect(cr, px - arm, py - th / 2, arm * 2, th, th / 2)
     cr.fill()
