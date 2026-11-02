@@ -621,11 +621,11 @@ function MapScreen({ role, city, onSwitch }: { role: Role; city: City | null; on
               <View style={s.row}>
                 <View style={s.navStat}>
                   <Ionicons name="medkit" size={24} color={C.green} />
-                  <View><Text style={s.navStatN}>{c.onSite}</Text><Text style={s.navStatL}>sur place</Text></View>
+                  <View style={{ flexShrink: 1 }}><Text style={s.navStatN}>{c.onSite}</Text><Text style={s.navStatL}>sur place</Text></View>
                 </View>
                 <View style={s.navStat}>
                   <Ionicons name="walk" size={24} color={C.orange} />
-                  <View><Text style={s.navStatN}>{c.enRoute}</Text><Text style={s.navStatL}>en route, sans toi</Text></View>
+                  <View style={{ flexShrink: 1 }}><Text style={s.navStatN}>{c.enRoute}</Text><Text style={s.navStatL}>en route, sans toi</Text></View>
                 </View>
               </View>
               {arrived && <View style={[s.row, { marginTop: 12 }]}><Btn label="Résolu" color={C.green} onPress={() => resolve(goingTo.id)} /></View>}
@@ -795,7 +795,8 @@ function Btn(p: { label?: string; icon?: any; a11y?: string; color: string; busy
 
 // Red: nobody coming. Orange: medics en route. Green: a medic is there.
 const tone = (c: { enRoute: number; onSite: number }) => (c.onSite ? C.green : c.enRoute ? C.orange : C.red);
-const fmtM = (m: number) => (m < 1000 ? Math.round(m) + ' m' : (m / 1000).toFixed(1) + ' km');
+// No-break space: "95 m" never splits across lines at large font sizes.
+const fmtM = (m: number) => (m < 1000 ? Math.round(m) + '\u00a0m' : (m / 1000).toFixed(1) + '\u00a0km');
 
 function describe(r: MeshRecord, pos: Pos | null) {
   const min = Math.max(0, Math.round((Date.now() - r.createdAt) / 60000));
