@@ -7,6 +7,9 @@ Usage: python3 -I make_flyer.py OUT.pdf [URL]      the A4 sheet (+ OUT.png previ
 import json, os, subprocess, sys
 import cairo
 
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "assets"))
+from make_icons import stretcher  # noqa: E402
+
 NAME = "Brancard"
 HERE = os.path.dirname(os.path.abspath(__file__))
 MM = 72 / 25.4
@@ -33,21 +36,11 @@ def rrect(cr, x, y, w, h, r):
 
 
 def icon(cr, x, y, s):
-    """The app icon: red rounded square, white dot and two pairs of waves."""
+    """The app icon: red rounded square with the mark from assets/make_icons.py."""
     cr.set_source_rgb(*RED)
     rrect(cr, x, y, s, s, s * 0.24)
     cr.fill()
-    cx, cy = x + s / 2, y + s / 2
-    cr.set_source_rgb(1, 1, 1)
-    cr.arc(cx, cy, s * 0.06, 0, 6.2832)
-    cr.fill()
-    cr.set_line_width(s * 0.05)
-    cr.set_line_cap(cairo.LINE_CAP_ROUND)
-    for r in (0.2, 0.33):
-        for a0 in (-0.9, 3.1416 - 0.9):
-            cr.new_path()
-            cr.arc(cx, cy, s * r, a0, a0 + 1.8)
-            cr.stroke()
+    stretcher(cr, x + s / 2, y + s / 2, s * 0.62)
 
 
 def text(cr, s, x, y, size, bold=True, color=INK, width=None, lead=1.25):

@@ -7,7 +7,7 @@ import * as Location from 'expo-location';
 import * as Notifications from 'expo-notifications';
 import { StatusBar } from 'expo-status-bar';
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { ActivityIndicator, AppState, BackHandler, Keyboard, KeyboardAvoidingView, Linking, Pressable, ScrollView, StyleSheet, Text, TextInput, useWindowDimensions, Vibration, View } from 'react-native';
+import { ActivityIndicator, AppState, Image, BackHandler, Keyboard, KeyboardAvoidingView, Linking, Pressable, ScrollView, StyleSheet, Text, TextInput, useWindowDimensions, Vibration, View } from 'react-native';
 import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
 import Manif from './modules/manif';
 import { coverage, distanceM, type Alert as MeshRecord } from './src/alerts';
@@ -212,7 +212,7 @@ function RoleScreen({ onPick }: { onPick: (r: Role) => void }) {
   const insets = useSafeAreaInsets();
   return (
     <View style={[s.role, { paddingTop: insets.top + 48, paddingBottom: insets.bottom + 24 }]}>
-      <View style={s.logo}><Ionicons name="radio" size={38} color="#fff" /></View>
+      <View style={s.logo}><Image source={require('./assets/mark.png')} style={{ width: 42, height: 42 }} /></View>
       <Text style={s.h1}>Brancard</Text>
       <Text style={s.sub}>Les alertes passent de téléphone en téléphone, même sans réseau. Plus on est nombreux, plus ça porte loin.</Text>
       <View style={{ flex: 1 }} />

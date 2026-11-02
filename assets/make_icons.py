@@ -1,26 +1,40 @@
-"""Brancard app icons: a dot with echo waves, white on red. No red cross (protected emblem).
-Run: python3 -I assets/make_icons.py assets/"""
+"""Brancard app icons: someone lying on a stretcher, white on red. No red cross (protected emblem).
+Run: python3 -I assets/make_icons.py assets/
+stretcher() is the one drawing of the mark; promo/make_flyer.py and promo/make_video.py import it."""
 import math
 import sys
 
 import cairo
 
 RED = (0.898, 0.282, 0.302)
-out = sys.argv[1]
 
 
-def waves(cr, cx, cy, s, color=(1, 1, 1)):
-    """Centered mark, s = overall width."""
+def rrect(cr, x, y, w, h, r):
+    cr.new_sub_path()
+    for (px, py, a) in ((x + w - r, y + r, -math.pi / 2), (x + w - r, y + h - r, 0), (x + r, y + h - r, math.pi / 2), (x + r, y + r, math.pi)):
+        cr.arc(px, py, r, a, a + math.pi / 2)
+    cr.close_path()
+
+
+def stretcher(cr, cx, cy, s, color=(1, 1, 1)):
+    """Centered mark, s = overall width: a medical plus above someone lying on a stretcher.
+    The plus is white with rounded ends on the red tile, never red on white (Red Cross emblem)."""
     cr.set_source_rgb(*color)
-    cr.arc(cx, cy, s * 0.085, 0, 2 * math.pi)
+    cy += s * 0.08  # balance the plus above against the legs below
+    lw = s * 0.07
+    arm, th = s * 0.13, s * 0.085
+    px, py = cx + s * 0.08, cy - s * 0.36
+    rrect(cr, px - th / 2, py - arm, th, arm * 2, th / 2)
+    rrect(cr, px - arm, py - th / 2, arm * 2, th, th / 2)
     cr.fill()
-    cr.set_line_width(s * 0.07)
-    cr.set_line_cap(cairo.LINE_CAP_ROUND)
-    for r in (0.24, 0.4):
-        for a0 in (-0.75, math.pi - 0.75):
-            cr.new_sub_path()
-            cr.arc(cx, cy, s * r, a0, a0 + 1.5)
-    cr.stroke()
+    rrect(cr, cx - s * 0.5, cy + s * 0.08, s, lw, lw / 2)
+    for x in (-0.3, 0.3):
+        rrect(cr, cx + s * x - lw / 2, cy + s * 0.08, lw, s * 0.2, lw / 2)
+    cr.fill()
+    cr.arc(cx - s * 0.27, cy - s * 0.05, s * 0.085, 0, 2 * math.pi)
+    cr.fill()
+    rrect(cr, cx - s * 0.15, cy - s * 0.13, s * 0.47, s * 0.17, s * 0.085)
+    cr.fill()
 
 
 def png(name, size, bg=None, mark=0.0, color=(1, 1, 1), radius=0.0):
@@ -38,13 +52,15 @@ def png(name, size, bg=None, mark=0.0, color=(1, 1, 1), radius=0.0):
         else:
             cr.paint()
     if mark:
-        waves(cr, size / 2, size / 2, size * mark, color)
-    surf.write_to_png(f"{out}/{name}")
+        stretcher(cr, size / 2, size / 2, size * mark, color)
+    surf.write_to_png(f"{sys.argv[1]}/{name}")
 
 
-png("icon.png", 1024, RED, 0.62)
-png("splash-icon.png", 1024, None, 0.5, RED)
-png("favicon.png", 48, RED, 0.62, radius=0.2)
-png("android-icon-background.png", 512, RED)
-png("android-icon-foreground.png", 512, None, 0.42)  # adaptive icons crop to the inner ~66 %
-png("android-icon-monochrome.png", 432, None, 0.42)
+if __name__ == "__main__":
+    out = sys.argv[1]
+    png("icon.png", 1024, RED, 0.62)
+    png("splash-icon.png", 1024, None, 0.5, RED)
+    png("favicon.png", 48, RED, 0.62, radius=0.2)
+    png("android-icon-background.png", 512, RED)
+    png("android-icon-foreground.png", 512, None, 0.42)  # adaptive icons crop to the inner ~66 %
+    png("android-icon-monochrome.png", 432, None, 0.42)
