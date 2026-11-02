@@ -89,39 +89,47 @@ function joinDeadEnds(nodes: LngLat[], adj: Graph['adj']) {
   }
 }
 
-/** Closest point on any street segment (not just the closest vertex: on a long straight street
- *  that vertex can be behind you, and the route would start by walking back to it). */
-function snap(g: Graph, p: LngLat) {
+const SNAP_SLACK_M = 15; // streets this much further than the nearest one are also candidates
+
+/** Closest points on the street segments near `p` (not just the closest vertex: on a long straight
+ *  street that vertex can be behind you). Every segment within SNAP_SLACK_M of the nearest one is a
+ *  candidate, so a walker between two streets isn't forced onto the wrong one first. */
+function snaps(g: Graph, p: LngLat) {
   const k = Math.cos((p[1] * Math.PI) / 180);
-  type Snap = { u: number; v: number; q: LngLat; m: number };
-  let best: Snap | null = null as Snap | null;
+  const all: { u: number; v: number; q: LngLat; m: number }[] = [];
   g.adj.forEach((es, u) => es.forEach(({ to: v }) => {
     if (u > v) return;
     const [a, b] = [g.nodes[u], g.nodes[v]];
     const dx = (b[0] - a[0]) * k, dy = b[1] - a[1], L = dx * dx + dy * dy;
     const s = L ? Math.max(0, Math.min(1, ((p[0] - a[0]) * k * dx + (p[1] - a[1]) * dy) / L)) : 0;
     const q: LngLat = [a[0] + s * (b[0] - a[0]), a[1] + s * (b[1] - a[1])];
-    const m = d(q, p);
-    if (!best || m < best.m) best = { u, v, q, m };
+    all.push({ u, v, q, m: d(q, p) });
   }));
-  return best && best.m <= MAX_SNAP_M ? best : null;
+  const best = Math.min(...all.map((c) => c.m));
+  return best <= MAX_SNAP_M ? all.filter((c) => c.m <= best + SNAP_SLACK_M) : [];
 }
 
-/** A* from the street point nearest `from` to the one nearest `to`. Null if unreachable. */
+/** A* from `from` to `to` through the streets near each of them. Null if unreachable. */
 export function shortestPath(g: Graph, from: LngLat, to: LngLat): LngLat[] | null {
-  const a = snap(g, from), b = snap(g, to);
-  if (!a || !b) return null;
-  // Two extra nodes on their segments: s (start) and t (target).
-  const s = g.nodes.length, t = s + 1;
-  const node = (i: number) => (i < s ? g.nodes[i] : i === s ? a.q : b.q);
+  const A = snaps(g, from), B = snaps(g, to);
+  if (!A.length || !B.length) return null;
+  // Extra nodes: s (the walker), t (the SOS), and one per candidate point on a nearby street.
+  const n = g.nodes.length, more: LngLat[] = [from, to];
+  const s = n, t = n + 1;
+  const node = (i: number) => (i < n ? g.nodes[i] : more[i - n]);
+  const add = (p: LngLat) => n + more.push(p) - 1;
   const extra = new Map<number, { to: number; w: number }[]>();
   const link = (u: number, v: number) => { const w = d(node(u), node(v)); extra.set(u, [...(extra.get(u) ?? []), { to: v, w }]); };
-  link(s, a.u); link(s, a.v); link(b.u, t); link(b.v, t);
-  if (Math.min(a.u, a.v) === Math.min(b.u, b.v) && Math.max(a.u, a.v) === Math.max(b.u, b.v)) link(s, t); // same segment
+  const starts = A.map((c) => { const q = add(c.q); link(s, q); link(q, c.u); link(q, c.v); return { ...c, i: q }; });
+  for (const c of B) {
+    const q = add(c.q);
+    link(c.u, q); link(c.v, q); link(q, t);
+    for (const a of starts) if (a.u === c.u && a.v === c.v) link(a.i, q); // same segment: walk straight along it
+  }
   const edges = (i: number) => [...(g.adj[i] ?? []), ...(extra.get(i) ?? [])];
 
-  const dist = new Float64Array(g.nodes.length + 2).fill(Infinity);
-  const prev = new Int32Array(g.nodes.length + 2).fill(-1);
+  const dist = new Float64Array(n + more.length).fill(Infinity);
+  const prev = new Int32Array(n + more.length).fill(-1);
   const heap: [number, number][] = []; // [f-score, node], binary min-heap
   const push = (f: number, n: number) => {
     heap.push([f, n]);
@@ -165,9 +173,8 @@ export function shortestPath(g: Graph, from: LngLat, to: LngLat): LngLat[] | nul
     }
   }
   if (dist[t] === Infinity) return null;
-  const path: LngLat[] = [to];
-  for (let n = t; n >= 0; n = prev[n]) path.push(node(n));
-  path.push(from);
+  const path: LngLat[] = [];
+  for (let i = t; i >= 0; i = prev[i]) path.push(node(i));
   return path.reverse();
 }
 

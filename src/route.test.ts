@@ -61,3 +61,11 @@ test('starts on the street segment, not at a vertex behind the walker', () => {
   expect(gd.turn).toBe('left');
   expect(Math.abs(gd.toTurnM - 250)).toBeLessThan(10);
 });
+
+test('walker between two streets is not sent to the nearer one first', () => {
+  // Street A runs east-west 20 m south of the walker; street B runs north 25 m east of them and
+  // leads to the SOS. The route must go straight to B, not down to A and back up.
+  const g = buildGraph([[at(-1, -0.2), at(1, -0.2)], [at(0.25, -0.2), at(0.25, 2)]]);
+  const p = shortestPath(g, at(0, 0), at(0.25, 2))!;
+  expect(lengthM(p)).toBeLessThan(25 + 200 + 10); // via street A it would be 20 + 25 + 220
+});
