@@ -69,3 +69,11 @@ test('walker between two streets is not sent to the nearer one first', () => {
   const p = shortestPath(g, at(0, 0), at(0.25, 2))!;
   expect(lengthM(p)).toBeLessThan(25 + 200 + 10); // via street A it would be 20 + 25 + 220
 });
+
+test('guidance: a few metres before the corner, still this turn (not the next one)', () => {
+  // north 100 m, right 100 m, left 100 m: 5 m before the first corner it must say right
+  const r: LngLat[] = [at(0, 0), at(0, 1), at(1, 1), at(1, 2)];
+  const g = guidance(r, at(0, 0.95))!;
+  expect(g.turn).toBe('right');
+  expect(g.toTurnM).toBeLessThan(10);
+});

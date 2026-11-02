@@ -10,16 +10,17 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode
 import { ActivityIndicator, AppState, Image, BackHandler, Keyboard, KeyboardAvoidingView, Linking, Pressable, Platform, ScrollView, StyleSheet, Text, TextInput, useWindowDimensions, Vibration, View } from 'react-native';
 import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
 import Manif from './modules/manif';
-import { coverage, distanceM, type Alert as MeshRecord } from './src/alerts';
+import { coverage, coverageAll, distanceM, ON_SITE_M, type Alert as MeshRecord } from './src/alerts';
 import { ensurePermissions, useMesh } from './src/mesh';
 import { MAP_STYLE } from './src/mapStyle';
 import { center, downloadCity, installCount, loadCity, ORIGIN, saveCity, searchCities, type City } from './src/onboarding';
-import { buildGraph, guidance, lengthM, shortestPath, type LngLat, type Turn } from './src/route';
+import { buildGraph, guidance, lengthM, shortestPath, type Graph, type LngLat, type Turn } from './src/route';
 
 // Walkable road layers of that style; the router reads their geometry from tiles on the phone.
 const ROAD_LAYERS = ['highway_path', 'highway_minor', 'highway_major_inner', 'highway_major_subtle', 'road_pier'];
 const WALK_MPS = 1.25;
 const MANIF_KEY = 'echo.manif.v1';
+const ROLE_KEY = 'echo.role.v1';
 const ECO_KEY = 'echo.eco.v1';
 const NO_PAD = { top: 0, bottom: 0, left: 0, right: 0 };
 const OFF_ROUTE_M = 40; // further than this from the route: offer to recompute it
@@ -50,16 +51,20 @@ const FREE_TEXT = Platform.OS !== 'ios';
 const shownNote = (note: string) => (FREE_TEXT ? note : note.split(' · ').filter((x) => TAGS.includes(x)).join(' · '));
 
 type Role = 'medic' | 'civil';
-type Pos = { lat: number; lon: number };
+type Pos = { lat: number; lon: number; acc?: number; at?: number }; // acc: metres, at: fix time (ms)
 type Dialog = { title: string; body?: string; icon?: any; tone?: string; actions: { label: string; color?: string; onPress?: () => void }[] };
 type Route = { to: string; coords: LngLat[]; m: number; exact: boolean };
 
 export default function App() {
   const [city, setCity] = useState<City | null | undefined>(undefined); // undefined while loading
   const [skipped, setSkipped] = useState(false); // no network on first launch: let them in anyway
-  const [role, setRole] = useState<Role | null>(null);
+  const [role, setRoleState] = useState<Role | null | undefined>(undefined); // undefined while loading
   const [dialog, setDialog] = useState<Dialog | null>(null);
   useEffect(() => { loadCity().then(setCity, () => setCity(null)); }, []);
+  // Saved: after a crash, an OTA restart or the system killing it, the app comes straight back to the map
+  // (and the mesh) instead of waiting on the role screen.
+  useEffect(() => { AsyncStorage.getItem(ROLE_KEY).then((r) => setRoleState(r === 'medic' || r === 'civil' ? r : null), () => setRoleState(null)); }, []);
+  const setRole = (r: Role | null) => { setRoleState(r); (r ? AsyncStorage.setItem(ROLE_KEY, r) : AsyncStorage.removeItem(ROLE_KEY)).catch(() => {}); };
 
   // First launch: the city is mandatory (its map must be on the phone before the march).
   const firstCity = async (c: City | null) => {
@@ -80,7 +85,7 @@ export default function App() {
   });
 
   const screen =
-    city === undefined ? <View style={{ flex: 1, backgroundColor: C.bg }} /> :
+    city === undefined || role === undefined ? <View style={{ flex: 1, backgroundColor: C.bg }} /> :
     !city && !skipped ? <CityPicker onDone={firstCity} /> :
     !role ? <RoleScreen onPick={pickRole} /> :
     <MapScreen role={role} city={city} onSwitch={() => setRole(null)} />;
@@ -273,9 +278,12 @@ function MapScreen({ role, city, onSwitch }: { role: Role; city: City | null; on
   const toggleEco = () => { setEco(!eco); AsyncStorage.setItem(ECO_KEY, eco ? '0' : '1').catch(() => {}); };
   useEffect(() => {
     if (!Manif) return;
-    if (manif) ensurePermissions().finally(() => Manif!.setActive(true)); // the service needs its permissions first
-    else Manif.setActive(false);
-  }, [manif]);
+    Manif.setOverLock(manif);
+    // A medic's phone must keep relaying and ringing once locked, mode manif or not: Android freezes apps that
+    // aren't in the foreground. The service needs its permissions first.
+    if (manif || role === 'medic') ensurePermissions().finally(() => Manif!.setRelay(true));
+    else Manif.setRelay(false);
+  }, [manif, role]);
   const toggleManif = () => {
     const set = (on: boolean) => { setManif(on); AsyncStorage.setItem(MANIF_KEY, on ? '1' : '0').catch(() => {}); };
     if (manif) return set(false);
@@ -293,17 +301,21 @@ function MapScreen({ role, city, onSwitch }: { role: Role; city: City | null; on
   // get a coarse, slow fix and stop entirely in the background.
   const gps = useRef<Location.LocationSubscription | null>(null);
   const mapReady = useRef(false);
-  const startGps = async () => {
+  // One start at a time: the permission dialog itself fires background -> active, which starts it again.
+  const starting = useRef<Promise<boolean> | null>(null);
+  const startGps = () => (starting.current ??= startGpsOnce().finally(() => { starting.current = null; }));
+  const startGpsOnce = async () => {
     if (gps.current) return true;
     await ensurePermissions();
     if ((await Location.requestForegroundPermissionsAsync()).status !== 'granted') return false;
     let first = !posRef.current;
     const onPos = (l: Location.LocationObject) => {
-      const p = { lat: l.coords.latitude, lon: l.coords.longitude };
+      const p = { lat: l.coords.latitude, lon: l.coords.longitude, acc: l.coords.accuracy ?? undefined, at: l.timestamp };
       setPos(p);
       if (first) { first = false; if (mapReady.current) cam.current?.flyTo({ center: [p.lon, p.lat], zoom: 17.5, duration: 800 }); }
     };
-    const last = await Location.getLastKnownPositionAsync().catch(() => null);
+    // A last known fix only if recent and decent: an hours-old one (from home) must not place an SOS.
+    const last = await Location.getLastKnownPositionAsync({ maxAge: 120_000, requiredAccuracy: 200 }).catch(() => null);
     if (last) onPos(last);
     gps.current ??= await Location.watchPositionAsync(
       role === 'medic'
@@ -339,15 +351,21 @@ function MapScreen({ role, city, onSwitch }: { role: Role; city: City | null; on
   const [going, setGoing] = useState<string | null>(null);
   const goingRef = useRef(going);
   goingRef.current = going;
+  // Once on site: "care" (on s'en occupe) or "help" (besoin de renfort), sent in the heartbeat with the target.
+  const [care, setCare] = useState<'care' | 'help' | null>(null);
+  const careRef = useRef(care);
+  careRef.current = care;
+  useEffect(() => setCare(null), [going]);
   const lastPing = useRef(0);
   const ping = (force = false) => {
     const p = posRef.current;
     if (role !== 'medic' || !p || (!force && Date.now() - lastPing.current < 10_000)) return;
+    if (p.at && Date.now() - p.at > 120_000) return; // stale fix (indoors, GPS off): say nothing rather than lie
     lastPing.current = Date.now();
-    mesh.pingMedic(p.lat, p.lon, goingRef.current);
+    mesh.pingMedic(p.lat, p.lon, goingRef.current, careRef.current);
   };
   useEffect(() => ping(), [pos]);
-  useEffect(() => ping(true), [going]);
+  useEffect(() => ping(true), [going, care]);
   useEffect(() => {
     if (role !== 'medic') return;
     const t = setInterval(() => ping(true), 60_000);
@@ -361,35 +379,48 @@ function MapScreen({ role, city, onSwitch }: { role: Role; city: City | null; on
       await ensurePermissions();
       await Notifications.setNotificationChannelAsync('sos', {
         name: 'Alertes medic', importance: Notifications.AndroidImportance.MAX, vibrationPattern: [0, 500, 200, 500], sound: 'default',
+        lockscreenVisibility: Notifications.AndroidNotificationVisibility.PRIVATE, // details only once unlocked
       });
       await Notifications.requestPermissionsAsync();
     })().catch(() => {});
   }, [role]);
+  const lastAlarm = useRef(0);
+  // App not in front: a full-screen alert that lights the screen up, like a call (Android); a notification
+  // where that doesn't exist (iPhone).
+  const alarm = (title: string, body: string) => {
+    if (Manif) Manif.wake(title, body);
+    else Notifications.scheduleNotificationAsync({ content: { title, body, sound: 'default' }, trigger: { channelId: 'sos' } }).catch(() => {});
+  };
   useEffect(() => {
     const a = mesh.incoming;
-    if (!a || role !== 'medic') return;
+    if (!a || role !== 'medic' || Date.now() - lastAlarm.current < 20_000) return;
+    lastAlarm.current = Date.now();
     Vibration.vibrate([0, 500, 200, 500, 200, 500]);
     const body = [shownNote(a.note), describe(a, posRef.current)].filter(Boolean).join(' · ');
     if (AppState.currentState === 'active') return;
-    if (manifRef.current && Manif) Manif.wake("🚨 Besoin d'un medic", body); // lights the screen, over the lock screen
-    else Notifications.scheduleNotificationAsync({
-      content: { title: "🚨 Besoin d'un medic", body, sound: 'default' },
-      trigger: { channelId: 'sos' },
-    }).catch(() => {});
+    alarm("🚨 Besoin d'un medic", body);
   }, [mesh.incoming]);
 
   // Derived data, recomputed only when the mesh changes (not on every GPS fix).
-  const { sos, medics, cov, medicsGeo } = useMemo(() => {
+  const { sos, medics, cov, medicsGeo, states } = useMemo(() => {
     const sos = mesh.records.filter((r) => r.kind === 'sos' && r.status !== 'done');
     const medics = mesh.records.filter((r) => r.kind === 'medic');
-    const cov = new Map(sos.map((r) => [r.id, coverage(r, medics)]));
+    const cov = coverageAll(sos, medics);
     const medicsGeo: GeoJSON.FeatureCollection = {
       type: 'FeatureCollection',
       features: medics.map((m) => ({
         type: 'Feature', properties: { me: m.id === mesh.me }, geometry: { type: 'Point', coordinates: [m.lon, m.lat] },
       })),
     };
-    return { sos, medics, cov, medicsGeo };
+    // What the medics already there say, per SOS: taken care of, or asking for reinforcements.
+    const states = new Map<string, { care: number; help: number }>();
+    for (const m of medics) {
+      if (!m.target || !m.state || m.id === mesh.me) continue;
+      const st = states.get(m.target) ?? { care: 0, help: 0 };
+      st[m.state]++;
+      states.set(m.target, st);
+    }
+    return { sos, medics, cov, medicsGeo, states };
   }, [mesh.records]);
   const meGeo = useMemo<GeoJSON.Feature | null>(
     () => (pos ? { type: 'Feature', properties: {}, geometry: { type: 'Point', coordinates: [pos.lon, pos.lat] } } : null),
@@ -404,7 +435,8 @@ function MapScreen({ role, city, onSwitch }: { role: Role; city: City | null; on
   useEffect(() => {
     if (going && !sos.some((r) => r.id === going)) {
       setGoing(null);
-      const body = "L'alerte vers laquelle tu allais a été clôturée : résolue par un medic ou annulée par la personne.";
+      const done = mesh.records.find((r) => r.id === going);
+      const body = done?.doneBy ? "Un medic sur place a marqué résolue l'alerte vers laquelle tu allais." : "La personne qui a lancé l'alerte vers laquelle tu allais l'a annulée.";
       Vibration.vibrate([0, 300, 150, 300]);
       setDialog({ icon: 'checkmark-circle', tone: C.green, title: 'Intervention terminée', body, actions: [{ label: 'OK', color: C.green }] });
       if (AppState.currentState !== 'active')
@@ -420,6 +452,44 @@ function MapScreen({ role, city, onSwitch }: { role: Role; city: City | null; on
   const arrived = !!nav && leftM < ARRIVED_M;
   const topH = nav ? 92 : 64; // banners sit under the top bar, or under the direction block
   const { height: screenH } = useWindowDimensions();
+
+  useEffect(() => {
+    if (going && goingTo && pos && !routing && route?.to !== going) computeRoute(goingTo, true);
+  }, [pos, going]);
+
+  // Arriving (within 40 m of the SOS you head to): ask how it goes, once. The answer goes to the other medics.
+  const asked = useRef(new Set<string>());
+  const onSiteAt = (r: MeshRecord | undefined) => !!r && !!pos && distanceM(pos.lat, pos.lon, r.lat, r.lon) <= ON_SITE_M;
+  useEffect(() => {
+    if (role !== 'medic' || !going || !goingTo || !onSiteAt(goingTo) || asked.current.has(going)) return;
+    asked.current.add(going);
+    Vibration.vibrate([0, 300, 150, 300]);
+    const body = "Comment ça se passe ? Les autres medics verront ta réponse. Seuls les medics sur place, comme toi, peuvent la marquer résolue.";
+    setDialog({
+      icon: 'medkit', tone: C.green, title: 'Tu es sur place', body,
+      actions: [{ label: 'Besoin de renfort', color: C.red, onPress: () => setCare('help') }, { label: "On s'en occupe", color: C.green, onPress: () => setCare('care') }],
+    });
+    if (AppState.currentState !== 'active') alarm('Tu es sur place', "On s'en occupe, ou besoin de renfort ?");
+  }, [pos, going]);
+
+  // A medic on site asks for reinforcements: alert the other medics (rate-limited like new alerts).
+  const toldHelp = useRef(new Set<string>());
+  useEffect(() => {
+    if (role !== 'medic') return;
+    const id = [...states].find(([sid, st]) => st.help > 0 && sid !== going && !toldHelp.current.has(sid))?.[0];
+    const r = id && sos.find((x) => x.id === id);
+    if (!id || !r) return;
+    toldHelp.current.add(id);
+    if (Date.now() - lastAlarm.current < 20_000) return;
+    lastAlarm.current = Date.now();
+    Vibration.vibrate([0, 500, 200, 500]);
+    const body = [shownNote(r.note), describe(r, posRef.current)].filter(Boolean).join(' · ');
+    setDialog({
+      icon: 'warning', title: 'Renfort demandé', body: 'Un medic sur place a besoin d\'aide.' + (body ? '\n' + body : ''),
+      actions: [{ label: 'Plus tard' }, { label: "J'y vais", color: C.orange, onPress: () => { setGoing(r.id); computeRoute(r, true); } }],
+    });
+    if (AppState.currentState !== 'active') alarm('🚨 Renfort demandé', body || "Un medic sur place a besoin d'aide.");
+  }, [states]);
 
   const sel = sos.find((r) => r.id === selected) ?? null;
   const dist = (r: MeshRecord) => (pos ? distanceM(pos.lat, pos.lon, r.lat, r.lon) : 0);
@@ -437,7 +507,7 @@ function MapScreen({ role, city, onSwitch }: { role: Role; city: City | null; on
       cam.current?.flyTo({ center: [r.lon, r.lat], zoom: 17.5, duration: 600, padding: going ? navPad : NO_PAD });
       return;
     }
-    const c = coverage(r, medics);
+    const c = cov.get(r.id) ?? coverage(r, medics, sos);
     setDialog({
       icon: 'navigate', tone: C.orange, title: 'Aller à cette urgence ?',
       body: [shownNote(r.note), describe(r, pos), `${c.onSite} sur place · ${c.enRoute} en route`].filter(Boolean).join('\n'),
@@ -451,35 +521,46 @@ function MapScreen({ role, city, onSwitch }: { role: Role; city: City | null; on
   // Padding keeps the medic in the clear area between the direction block and the alert card
   // (camera padding sticks, so every other move resets it with NO_PAD).
   const navPad = { top: insets.top + 110, bottom: insets.bottom + 190, left: 40, right: 40 };
-  const computeRoute = async (r: MeshRecord, zoomOnMe = false) => {
-    const p = posRef.current;
-    if (!p || !map.current || routing) return;
-    setRouting(true);
-    const from: LngLat = [p.lon, p.lat], to: LngLat = [r.lon, r.lat];
-    const pad = 0.002; // ~200 m around both points so detours fit in the graph
-    cam.current?.fitBounds(
-      [Math.min(from[0], to[0]) - pad, Math.min(from[1], to[1]) - pad, Math.max(from[0], to[0]) + pad, Math.max(from[1], to[1]) + pad],
-      { padding: { top: insets.top + 70, bottom: 380, left: 30, right: 30 }, duration: 0 },
-    );
-    // ponytail: waits for the next full render (1.5 s cap); routes over ~3 km zoom out past the
-    // tiles that carry small streets, then fall back to a straight line.
-    await new Promise<void>((res) => { rendered.current = res; setTimeout(res, 1500); });
-    const feats = await map.current.queryRenderedFeatures({ layers: ROAD_LAYERS }).catch(() => []);
+  // Streets read from the tiles last time, and the area they cover: a new route inside it (recalculating,
+  // switching to a nearby SOS) skips the camera move and the wait for the map to draw.
+  const streets = useRef<{ graph: Graph; box: [number, number, number, number] } | null>(null);
+  const readStreets = async (box: [number, number, number, number], waitMs: number) => {
+    // ponytail: waits for the next full render (capped); routes over ~3 km zoom out past the tiles
+    // that carry small streets, then fall back to a straight line.
+    await new Promise<void>((res) => { rendered.current = res; setTimeout(res, waitMs); });
+    const feats = await map.current!.queryRenderedFeatures({ layers: ROAD_LAYERS }).catch(() => []);
     const lines: LngLat[][] = [];
     for (const f of feats) {
       const g = f.geometry;
       if (g.type === 'LineString') lines.push(g.coordinates as LngLat[]);
       else if (g.type === 'MultiLineString') lines.push(...(g.coordinates as LngLat[][]));
     }
-    const path = shortestPath(buildGraph(lines), from, to);
+    streets.current = { graph: buildGraph(lines), box };
+    return streets.current.graph;
+  };
+  const computeRoute = async (r: MeshRecord, zoomOnMe = false) => {
+    const p = posRef.current;
+    if (!p || !map.current || routing) return;
+    setRouting(true);
+    const from: LngLat = [p.lon, p.lat], to: LngLat = [r.lon, r.lat];
+    const inBox = (b: number[], q: LngLat) => q[0] > b[0] + 0.0008 && q[0] < b[2] - 0.0008 && q[1] > b[1] + 0.0008 && q[1] < b[3] - 0.0008;
+    const s = streets.current;
+    let path = s && inBox(s.box, from) && inBox(s.box, to) ? shortestPath(s.graph, from, to) : null;
+    if (!path) {
+      const pad = 0.002; // ~200 m around both points so detours fit in the graph
+      const box: [number, number, number, number] = [Math.min(from[0], to[0]) - pad, Math.min(from[1], to[1]) - pad, Math.max(from[0], to[0]) + pad, Math.max(from[1], to[1]) + pad];
+      cam.current?.fitBounds(box, { padding: { top: insets.top + 70, bottom: 380, left: 30, right: 30 }, duration: 0 });
+      // Short first wait; only if the streets read so far don't connect the two points, wait for the rest.
+      path = shortestPath(await readStreets(box, 700), from, to) ?? shortestPath(await readStreets(box, 900), from, to);
+    }
     const coords = path ?? [from, to];
     setRoute({ to: r.id, coords, m: lengthM(coords), exact: !!path });
     setRouting(false);
-    // "J'y vais": once the route is read from the tiles, put the medic's own position up close.
     // "J'y vais": the whole route, framed between the direction block and the bottom panel.
     if (zoomOnMe) {
-      const xs = coords.map((c) => c[0]), ys = coords.map((c) => c[1]);
-      cam.current?.fitBounds([Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)], { padding: navPad, duration: 700 });
+      let [w, s_, e, n] = [Infinity, Infinity, -Infinity, -Infinity];
+      for (const [x, y] of coords) { w = Math.min(w, x); e = Math.max(e, x); s_ = Math.min(s_, y); n = Math.max(n, y); }
+      cam.current?.fitBounds([w, s_, e, n], { padding: navPad, duration: 700 });
     }
   };
 
@@ -487,15 +568,29 @@ function MapScreen({ role, city, onSwitch }: { role: Role; city: City | null; on
   const closeCity = useCallback(() => setCityOpen(false), []);
   const openSheet = (at: Pos | null) => { setTags([]); setNote(''); setSheet({ at }); };
   const target = sheet?.at ?? pos;
-  const confirm = () => {
-    if (!target) return;
-    mesh.raise(target.lat, target.lon, [...tags, note.trim()].filter(Boolean).join(' · '));
+  const [locating, setLocating] = useState(false);
+  const confirm = async () => {
+    let at = target;
+    if (!at || locating) return;
+    if (!sheet?.at && (!pos?.at || Date.now() - pos.at > 30_000 || (pos.acc ?? 0) > 50)) {
+      // Old or coarse fix: ask for a precise one, but never wait more than 6 s with someone hurt.
+      setLocating(true);
+      const fresh = await Promise.race([
+        Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High }).catch(() => null),
+        new Promise<null>((ok) => setTimeout(() => ok(null), 6000)),
+      ]);
+      setLocating(false);
+      if (fresh) at = { lat: fresh.coords.latitude, lon: fresh.coords.longitude, acc: fresh.coords.accuracy ?? undefined, at: fresh.timestamp };
+    }
+    mesh.raise(at.lat, at.lon, [...tags, note.trim()].filter(Boolean).join(' · '), role === 'medic' ? mesh.me : undefined);
     setSheet(null);
   };
 
+  // Closing: the author (cancel), or a medic on site (resolve, with their position, checked by every phone).
   const close = (id: string) => {
     if (going === id) { setGoing(null); setRoute(null); }
-    mesh.setStatus(id, 'done');
+    if (mesh.mine.includes(id)) mesh.cancel(id);
+    else if (pos) mesh.resolve(id, pos.lat, pos.lon);
     setSelected(null);
   };
   const resolve = (id: string) => setDialog({
@@ -621,7 +716,7 @@ function MapScreen({ role, city, onSwitch }: { role: Role; city: City | null; on
 
       {/* Heading to an SOS: who is there, who is on the way, cancel. Nothing else. */}
       {nav && goingTo && (() => {
-        const c = coverage(goingTo, medics.filter((m) => m.id !== mesh.me));
+        const c = coverage(goingTo, medics.filter((m) => m.id !== mesh.me), sos);
         return (
           <View style={[s.bottom, { paddingBottom: insets.bottom + 16 }]} pointerEvents="box-none">
             <Pressable style={({ pressed }) => [s.round, { alignSelf: 'flex-end', marginBottom: 12 }, pressed && s.pressed]} accessibilityLabel="Me recentrer" onPress={locate}>
@@ -635,7 +730,7 @@ function MapScreen({ role, city, onSwitch }: { role: Role; city: City | null; on
               </View>
               <View style={[s.row, { marginTop: 10 }]}>
                 <Btn icon="close" label="Annuler le trajet" color={C.line} onPress={() => { setGoing(null); setRoute(null); }} />
-                {arrived && <Btn label="Résolu" color={C.green} onPress={() => resolve(goingTo.id)} />}
+                {onSiteAt(goingTo) && <Btn label="Résolu" color={C.green} onPress={() => resolve(goingTo.id)} />}
               </View>
             </View>
           </View>
@@ -662,48 +757,45 @@ function MapScreen({ role, city, onSwitch }: { role: Role; city: City | null; on
         </Pressable>
         </View>
         {featured && (() => {
-          const c = cov.get(featured.id)!;
+          const c = cov.get(featured.id) ?? coverage(featured, medics, sos);
           const mine = mesh.mine.includes(featured.id);
           const r = route?.to === featured.id ? route : null;
+          const note = shownNote(featured.note);
           return (
-            <Pressable style={[s.card, { marginBottom: 12 }]} onPress={() => focus(featured)}>
+            <Pressable style={[s.card, { marginBottom: 10 }]} onPress={() => focus(featured)}>
               <View style={s.row}>
                 <View style={[s.dot, { backgroundColor: tone(c) }]} />
-                <Text style={s.cardTitle}>{featuredLabel}</Text>
+                <Text style={[s.cardTitle, { flex: 1 }]} numberOfLines={1}>{featuredLabel}</Text>
+                <Text style={s.cardMeta} numberOfLines={1}>{describe(featured, pos)}</Text>
                 {sel && (
-                  <Pressable onPress={() => setSelected(null)} hitSlop={12} style={{ marginLeft: 'auto' }}>
+                  <Pressable onPress={() => setSelected(null)} hitSlop={14} accessibilityLabel="Fermer">
                     <Ionicons name="close" size={20} color={C.muted} />
                   </Pressable>
                 )}
               </View>
-              {!!shownNote(featured.note) && <Text style={s.cardNote}>{shownNote(featured.note)}</Text>}
-              <Text style={s.cardMeta}>{describe(featured, pos)}</Text>
-              <View style={[s.row, { marginTop: 10, flexWrap: 'wrap' }]}>
-                <View style={s.stat}><Ionicons name="walk" size={14} color={C.orange} /><Text style={s.statText}>{c.enRoute} en route</Text></View>
-                <View style={s.stat}><Ionicons name="medkit" size={14} color={C.green} /><Text style={s.statText}>{c.onSite} sur place</Text></View>
+              <View style={[s.row, { marginTop: 8 }]}>
+                <Text style={[s.cardNote, { flex: 1 }]} numberOfLines={1}>{note || ' '}</Text>
+                <View style={s.stat}><Ionicons name="walk" size={13} color={C.orange} /><Text style={s.statText}>{c.enRoute}</Text></View>
+                <View style={s.stat}><Ionicons name="medkit" size={13} color={C.green} /><Text style={s.statText}>{c.onSite}</Text></View>
                 {(routing || r) && (
                   <View style={s.stat}>
-                    <Ionicons name="navigate" size={14} color={C.blue} />
-                    <Text style={s.statText}>
-                      {routing ? 'Calcul…' : `${Math.max(1, Math.round(r!.m / WALK_MPS / 60))} min · ${fmtM(r!.m)}${r!.exact ? '' : " à vol d'oiseau"}`}
-                    </Text>
+                    <Ionicons name="navigate" size={13} color={C.blue} />
+                    <Text style={s.statText}>{routing ? '…' : `${Math.max(1, Math.round(r!.m / WALK_MPS / 60))} min`}</Text>
                   </View>
                 )}
               </View>
-              {(role === 'medic' || (!mine && pos)) && (
-                <View style={[s.row, { marginTop: 14 }]}>
-                  {role === 'medic' && (going === featured.id
-                    ? <Btn label="Je n'y vais plus" color={C.line} onPress={() => { setGoing(null); setRoute(null); }} />
-                    : <Btn label="J'y vais" color={C.orange} onPress={() => { setGoing(featured.id); computeRoute(featured, true); }} />)}
-                  {role === 'medic' && <Btn label="Résolu" color={C.green} onPress={() => resolve(featured.id)} />}
-                  {!mine && pos && <Btn icon="navigate" a11y="Itinéraire" color={C.blue} onPress={() => computeRoute(featured)} />}
-                </View>
-              )}
-              {mine && (
-                <View style={[s.row, { marginTop: 10 }]}>
-                  <Btn label="Annuler mon alerte" color={C.line} onPress={() => cancelMine(featured.id)} />
-                </View>
-              )}
+              {!!states.get(featured.id)?.help && <Text style={[s.hint, { color: C.red }]}>Renfort demandé par un medic sur place</Text>}
+              {!states.get(featured.id)?.help && !!states.get(featured.id)?.care && <Text style={[s.hint, { color: C.green }]}>Pris en charge par un medic sur place</Text>}
+              {mine && mesh.peerCount === 0 && <Text style={[s.hint, { color: C.orange }]}>Pas encore transmise : aucun téléphone à portée</Text>}
+              <View style={[s.row, { marginTop: 10 }]}>
+                {role === 'medic' && !mine && (going === featured.id
+                  ? <Btn small label="Je n'y vais plus" color={C.line} onPress={() => { setGoing(null); setRoute(null); }} />
+                  : <Btn small label="J'y vais" color={C.orange} onPress={() => { setGoing(featured.id); computeRoute(featured, true); }} />)}
+                {role === 'medic' && !mine && onSiteAt(featured) && <Btn small label="Résolu" color={C.green} onPress={() => resolve(featured.id)} />}
+                {mine && <Btn small label="Annuler mon alerte" color={C.line} onPress={() => cancelMine(featured.id)} />}
+                {mine && role === 'medic' && <Btn small label="Résolu" color={C.green} onPress={() => resolve(featured.id)} />}
+                {!mine && pos && <Btn small icon="navigate" a11y="Itinéraire" color={C.blue} onPress={() => computeRoute(featured)} />}
+              </View>
             </Pressable>
           );
         })()}
@@ -726,8 +818,9 @@ function MapScreen({ role, city, onSwitch }: { role: Role; city: City | null; on
               <Ionicons name="close" size={22} color={C.text} />
             </Pressable>
           </View>
-          <Text style={s.cardMeta}>
-            {sheet?.at ? 'Au point choisi sur la carte' : pos ? 'À ta position GPS actuelle' : 'En attente du GPS… (ou appui long sur la carte)'}
+          <Text style={[s.cardMeta, { marginTop: 6 }]}>
+            {sheet?.at ? 'Au point choisi sur la carte'
+              : pos ? `À ta position GPS${pos.acc ? ` (± ${Math.round(pos.acc)} m)` : ''}` : 'En attente du GPS… (ou appui long sur la carte)'}
             {' · '}visible par tous les téléphones du mesh
           </Text>
           <Text style={[s.label, { marginTop: 18 }]}>Précisions (facultatif)</Text>
@@ -744,11 +837,11 @@ function MapScreen({ role, city, onSwitch }: { role: Role; city: City | null; on
           </View>
           {FREE_TEXT && <TextInput value={note} onChangeText={setNote} maxLength={120} placeholder="Autre détail…"
             placeholderTextColor={C.muted} style={s.input} />}
-          <Pressable onPress={confirm} disabled={!target}
-            style={({ pressed }) => [s.sos, { marginTop: 24 }, !target && { opacity: 0.4 }, pressed && s.pressed]}
+          <Pressable onPress={confirm} disabled={!target || locating}
+            style={({ pressed }) => [s.sos, { marginTop: 24 }, (!target || locating) && { opacity: 0.6 }, pressed && s.pressed]}
             accessibilityRole="button" accessibilityLabel="Confirmer l'alerte">
-            <Ionicons name="checkmark-circle" size={28} color="#fff" />
-            <Text style={s.sosText}>CONFIRMER L'ALERTE</Text>
+            {locating ? <ActivityIndicator color="#fff" /> : <Ionicons name="checkmark-circle" size={28} color="#fff" />}
+            <Text style={s.sosText}>{locating ? 'LOCALISATION…' : "CONFIRMER L'ALERTE"}</Text>
           </Pressable>
         </View>
         </KeyboardAvoidingView>
@@ -786,12 +879,12 @@ const SosMarker = memo(function SosMarker(p: {
   );
 });
 
-function Btn(p: { label?: string; icon?: any; a11y?: string; color: string; busy?: boolean; onPress: () => void }) {
+function Btn(p: { label?: string; icon?: any; a11y?: string; color: string; busy?: boolean; small?: boolean; onPress: () => void }) {
   return (
     <Pressable onPress={p.onPress} accessibilityRole="button" accessibilityLabel={p.label ?? p.a11y}
-      style={({ pressed }) => [s.btn, !p.label && s.iconBtn, { backgroundColor: fill(p.color) }, pressed && s.pressed]}>
+      style={({ pressed }) => [s.btn, p.small && s.btnSm, !p.label && (p.small ? s.iconBtnSm : s.iconBtn), { backgroundColor: fill(p.color) }, pressed && s.pressed]}>
       {p.busy ? <ActivityIndicator color={ink(p.color)} /> : p.icon && <Ionicons name={p.icon} size={22} color={ink(p.color)} />}
-      {!!p.label && <Text style={[s.btnText, { color: ink(p.color) }]}>{p.label}</Text>}
+      {!!p.label && <Text style={[s.btnText, p.small && s.btnTextSm, { color: ink(p.color) }]} numberOfLines={1}>{p.label}</Text>}
     </Pressable>
   );
 }
@@ -837,20 +930,24 @@ const s = StyleSheet.create({
   pinSel: { transform: [{ scale: 1.2 }] },
   badge: { height: 20, flexDirection: 'row', alignItems: 'center', gap: 3, backgroundColor: C.card, borderRadius: 10, paddingHorizontal: 7 },
   badgeText: { color: C.text, fontSize: 11, fontWeight: '800', marginRight: 2 },
-  stat: { flexDirection: 'row', alignItems: 'center', gap: 5, backgroundColor: C.bg, borderRadius: 10, paddingHorizontal: 10, height: 30 },
+  stat: { flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: C.bg, borderRadius: 9, paddingHorizontal: 8, height: 26 },
   statText: { color: C.text, fontWeight: '700', fontSize: 13 },
 
   bottom: { position: 'absolute', left: 16, right: 16, bottom: 0 },
-  sos: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 12, height: 72, borderRadius: 24, backgroundColor: fill(C.red), ...shadow },
+  sos: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 12, height: 64, borderRadius: 22, backgroundColor: fill(C.red), ...shadow },
   sosText: { color: '#fff', fontSize: 19, fontWeight: '900', letterSpacing: 0.5 },
-  card: { backgroundColor: C.card, borderRadius: 24, padding: 18, ...shadow },
+  card: { backgroundColor: C.card, borderRadius: 20, padding: 12, paddingHorizontal: 14, ...shadow },
   row: { flexDirection: 'row', alignItems: 'center', gap: 10 },
-  cardTitle: { color: C.text, fontSize: 18, fontWeight: '800' },
-  cardNote: { color: C.text, fontSize: 15, marginTop: 10 },
-  cardMeta: { color: C.muted, fontSize: 14, marginTop: 6 },
+  cardTitle: { color: C.text, fontSize: 16, fontWeight: '800' },
+  cardNote: { color: C.text, fontSize: 14 },
+  cardMeta: { color: C.muted, fontSize: 13 },
   btn: { flex: 1, flexDirection: 'row', gap: 8, height: 50, borderRadius: 14, alignItems: 'center', justifyContent: 'center' },
   iconBtn: { flex: 0, width: 50 },
   pressed: { opacity: 0.75 },
+  btnSm: { height: 44, borderRadius: 12, paddingHorizontal: 10 },
+  iconBtnSm: { flex: 0, width: 44 },
+  btnTextSm: { fontSize: 15 },
+  hint: { fontSize: 13, fontWeight: '600', marginTop: 6 },
   btnText: { color: '#fff', fontWeight: '800', fontSize: 16 },
 
   sheet: { backgroundColor: C.card, borderTopLeftRadius: 24, borderTopRightRadius: 24, paddingTop: 22, paddingHorizontal: 16 }, // 16: confirm lands exactly on the SOS button

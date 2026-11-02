@@ -32,7 +32,7 @@ const BTN_OFF: &str = r#"<div class="b off" aria-disabled="true"><svg width="24"
 const HOUR: Duration = Duration::from_secs(3600);
 const MAX_UPDATE_JSON: u64 = 1 << 20; // a signed manifest is a few KB
 const MAX_UPLOAD: u64 = 200 << 20;
-const THREADS: usize = 4;
+const THREADS: usize = 16; // slow phones downloading the APK hold a thread each; 256 KB stacks, so cheap
 
 struct App {
     data: PathBuf,

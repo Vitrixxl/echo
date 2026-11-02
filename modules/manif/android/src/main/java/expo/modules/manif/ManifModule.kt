@@ -30,17 +30,21 @@ class ManifModule : Module() {
   override fun definition() = ModuleDefinition {
     Name("Manif")
 
-    Function("setActive") { on: Boolean ->
+    // Shown over the lock screen (mode manif only). The rest of the phone stays locked.
+    Function("setOverLock") { on: Boolean ->
       appContext.currentActivity?.let { a ->
-        // The rest of the phone stays locked: leaving Écho asks for the code again.
         if (Build.VERSION.SDK_INT >= 27) a.runOnUiThread { a.setShowWhenLocked(on); a.setTurnScreenOn(on) }
       }
+    }
+
+    // Keeps the process alive with the screen off (relay, GPS, alerts): always for medics, and in mode manif.
+    Function("setRelay") { on: Boolean ->
       val i = Intent(ctx, ManifService::class.java)
       if (!on) ctx.stopService(i)
       else if (Build.VERSION.SDK_INT >= 26) ctx.startForegroundService(i) else ctx.startService(i)
     }
 
-    // A full-screen notification: with the screen off the system turns it on and opens Écho over the lock screen.
+    // A full-screen notification: with the screen off the system turns it on and opens Brancard over the lock screen.
     Function("wake") { title: String, body: String ->
       val nm = ctx.getSystemService(NotificationManager::class.java)
       if (Build.VERSION.SDK_INT >= 26)
@@ -49,7 +53,10 @@ class ManifModule : Module() {
           enableVibration(true)
         })
       val open = openApp(ctx, 1)
+      // On the lock screen only "Brancard: nouvelle alerte" shows; the details need the phone unlocked.
+      val public = notification(ctx, WAKE_CH).setSmallIcon(R.drawable.manif_notif).setContentTitle("Brancard").setContentText("Nouvelle alerte").build()
       val n = notification(ctx, WAKE_CH)
+        .setVisibility(Notification.VISIBILITY_PRIVATE).setPublicVersion(public)
         .setSmallIcon(R.drawable.manif_notif).setContentTitle(title).setContentText(body)
         .setCategory(Notification.CATEGORY_ALARM).setContentIntent(open).setFullScreenIntent(open, true).setAutoCancel(true)
       if (Build.VERSION.SDK_INT >= 26) n.setTimeoutAfter(120_000)
@@ -67,8 +74,8 @@ class ManifService : Service() {
     if (Build.VERSION.SDK_INT >= 26)
       nm.createNotificationChannel(NotificationChannel(SERVICE_CH, "Mode manif", NotificationManager.IMPORTANCE_LOW))
     val n = notification(this, SERVICE_CH)
-      .setSmallIcon(R.drawable.manif_notif).setContentTitle("Mode manif activé")
-      .setContentText("Écho s'affiche dès que tu rallumes l'écran.").setOngoing(true).setContentIntent(openApp(this, 0)).build()
+      .setSmallIcon(R.drawable.manif_notif).setContentTitle("Brancard relaie les alertes")
+      .setContentText("Écran éteint, tu restes joignable.").setOngoing(true).setContentIntent(openApp(this, 0)).build()
     if (Build.VERSION.SDK_INT < 29) startForeground(1, n)
     else {
       // Each type needs its permission granted (Android 14): fall back to what we have.

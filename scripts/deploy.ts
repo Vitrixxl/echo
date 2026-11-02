@@ -23,7 +23,9 @@ import { homedir } from 'node:os';
 import { basename, extname, join, resolve } from 'node:path';
 
 const root = resolve(import.meta.dir, '..');
-const PI = process.env.ECHO_PI ?? 'vitrix@82.67.236.74';
+// The Pi's ssh target stays out of this public repo: ECHO_PI, or one line in ~/.config/echo/pi.
+const PI = process.env.ECHO_PI ?? (existsSync(join(homedir(), '.config/echo/pi')) ? readFileSync(join(homedir(), '.config/echo/pi'), 'utf8').trim() : '');
+if (!PI) { console.error('Set ECHO_PI=user@host (or write it to ~/.config/echo/pi).'); process.exit(1); }
 const APP = process.env.ECHO_APP ?? 'echo';
 const ORIGIN = (process.env.EXPO_PUBLIC_STATS_URL ?? 'https://brancard.vitrixxl.fr').replace(/\/$/, '');
 const KEY = process.env.ECHO_UPDATES_SIGNING_KEY ?? join(homedir(), '.config/echo/keys/expo-updates/private-key.pem');
@@ -96,7 +98,7 @@ if (apk) {
   run('bunx', ['expo', 'prebuild', '--platform', 'android', '--no-install'], { env: { ...process.env, CI: '1' } });
   const JAVA_HOME = process.env.JAVA_HOME ?? join(homedir(), '.local/share/jdk17');
   const env = { ...process.env, JAVA_HOME, PATH: `${JAVA_HOME}/bin:${process.env.PATH}`, ANDROID_HOME: process.env.ANDROID_HOME ?? join(homedir(), 'Android/Sdk') };
-  run('./gradlew', ['assembleRelease', '-PreactNativeArchitectures=arm64-v8a', '-q', ...(light ? ['--no-daemon', '--max-workers=1', '-Dorg.gradle.jvmargs=-Xmx1g -XX:MaxMetaspaceSize=384m', '-Pkotlin.compiler.execution.strategy=in-process'] : [])], { cwd: android, env });
+  run('./gradlew', ['assembleRelease', '-PreactNativeArchitectures=arm64-v8a,armeabi-v7a', '-q', ...(light ? ['--no-daemon', '--max-workers=1', '-Dorg.gradle.jvmargs=-Xmx1g -XX:MaxMetaspaceSize=384m', '-Pkotlin.compiler.execution.strategy=in-process'] : [])], { cwd: android, env });
   spawnSync('./gradlew', ['--stop'], { cwd: android }); // the daemon keeps gigabytes of RAM otherwise
   // Gradle signs with the public React Native debug key; anyone could sign a fake "update" with it.
   // Re-sign with our own key (kept off the repo) so Android refuses any APK not signed by us.

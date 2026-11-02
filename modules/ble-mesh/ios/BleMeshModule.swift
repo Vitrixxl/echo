@@ -1,10 +1,16 @@
 import CoreBluetooth
 import ExpoModulesCore
 
-// Same UUIDs as the Android module: that's the whole cross-platform contract.
-private let SERVICE = CBUUID(string: "6f0d7a10-5b8e-4c3a-9d4e-6d656469636d")
-private let CHAR = CBUUID(string: "6f0d7a11-5b8e-4c3a-9d4e-6d656469636d")
+// Same UUIDs as the Android module: that's the whole cross-platform contract. Random, so nothing on the air
+// spells out what the app is.
+private let SERVICE = CBUUID(string: "dcbe3a65-8595-4490-8012-38f541bb1582")
+private let CHAR = CBUUID(string: "dcbe3a66-8595-4490-8012-38f541bb1582")
 private let HEADER = 6 // msgId u16, index u16, total u16 (big endian)
+// Reassembly limits (same as Android): anyone can write to the GATT server.
+private let MAX_PARTS = 1024
+private let MAX_PENDING_PER_PEER = 4
+private let MAX_PENDING = 64
+private let PENDING_S: TimeInterval = 15
 
 /// One outgoing link: we are GATT client, the peer is GATT server. Writes are serialized.
 private final class Link {
@@ -21,7 +27,7 @@ public class BleMeshModule: Module {
   private var periph: CBPeripheralManager?
   private var links: [UUID: Link] = [:]
   private var lastTry: [UUID: Date] = [:]
-  private var inbox: [String: [Data?]] = [:]
+  private var inbox: [String: (parts: [Data?], at: Date)] = [:]
   private var msgId: UInt16 = 0
   private lazy var delegate = Delegate(self)
 
@@ -77,14 +83,24 @@ public class BleMeshModule: Module {
     guard data.count >= HEADER else { return }
     let b = [UInt8](data)
     let id = Int(b[0]) << 8 | Int(b[1]), index = Int(b[2]) << 8 | Int(b[3]), total = Int(b[4]) << 8 | Int(b[5])
-    guard total > 0, index < total, total <= 4096 else { return }
+    guard total > 0, index < total, total <= MAX_PARTS else { return }
     let key = "\(from):\(id)"
-    var parts = inbox[key] ?? Array(repeating: nil, count: total)
-    guard parts.count == total else { inbox[key] = nil; return }
-    parts[index] = data.subdata(in: HEADER..<data.count)
-    if parts.contains(where: { $0 == nil }) { inbox[key] = parts; return }
+    let now = Date()
+    inbox = inbox.filter { now.timeIntervalSince($0.value.at) < PENDING_S }
+    if inbox[key] == nil {
+      // Too many unfinished messages from this sender, or overall: forget the oldest.
+      let mine = inbox.filter { $0.key.hasPrefix("\(from):") }.sorted { $0.value.at < $1.value.at }
+      for (k, _) in mine.dropLast(MAX_PENDING_PER_PEER - 1) { inbox[k] = nil }
+      while inbox.count >= MAX_PENDING, let oldest = inbox.min(by: { $0.value.at < $1.value.at }) { inbox[oldest.key] = nil }
+    }
+    var entry = inbox[key] ?? (parts: Array(repeating: nil, count: total), at: now)
+    guard entry.parts.count == total else { inbox[key] = nil; return }
+    entry.parts[index] = data.subdata(in: HEADER..<data.count)
+    if entry.parts.contains(where: { $0 == nil }) { inbox[key] = entry; return }
     inbox[key] = nil
-    let text = String(decoding: parts.reduce(Data()) { $0 + $1! }, as: UTF8.self)
+    var whole = Data()
+    for part in entry.parts { whole.append(part!) }
+    let text = String(decoding: whole, as: UTF8.self)
     sendEvent("onText", ["peerId": from, "text": text])
   }
 

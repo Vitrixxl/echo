@@ -1,5 +1,16 @@
 // Pure mesh-record logic, no React Native imports so it can be tested with `bun test`.
 // A record is either an SOS ("someone needs a street medic") or a medic's live position.
+//
+// Peers are untrusted (police or hostile people can run a modified app). So an SOS is immutable once seen:
+// its position and details never change. Two ways to close it:
+//  - its author: they keep a random secret and put its hash (`key`) in the SOS; closing reveals the secret
+//    (`proof`), which nobody else can produce;
+//  - a medic on site: the close carries the medic's position (`doneLat/doneLon`), which must be within 40 m of
+//    the SOS. The normal app only offers it to a medic whose GPS is there. A modified app can still lie about
+//    its position: without medic credentials, that is the limit of what a mesh with no server can check.
+// A medic who arrives says how it goes in their heartbeat (`state`: "care" or "help" for reinforcements).
+import { sha256 } from '@noble/hashes/sha2.js';
+import { bytesToHex, hexToBytes } from '@noble/hashes/utils.js';
 
 export type Kind = 'sos' | 'medic';
 export type Status = 'need' | 'taken' | 'done';
@@ -14,6 +25,13 @@ export type Alert = {
   createdAt: number;
   updatedAt: number;
   target?: string; // medic only: id of the SOS this medic is heading to
+  state?: 'care' | 'help'; // medic only, about their target: "on s'en occupe" / "besoin de renfort"
+  key?: string; // SOS only: sha256 of the author's secret, hex
+  proof?: string; // SOS only, when closed: the author's secret, hex
+  by?: string; // SOS only: the author's medic id, when a medic raised it (so they don't count as "sur place")
+  doneBy?: string; // SOS only, when closed by a medic on site: their medic id and position
+  doneLat?: number;
+  doneLon?: number;
 };
 
 export type Store = Record<string, Alert>;
@@ -21,6 +39,18 @@ export type Store = Record<string, Alert>;
 export const SOS_TTL_MS = 6 * 60 * 60 * 1000; // SOS vanish 6h after creation
 export const MEDIC_TTL_MS = 5 * 60 * 1000; // medic dot vanishes 5 min after its last ping
 const RANK: Record<Status, number> = { need: 0, taken: 1, done: 2 };
+// Phone clocks drift (no network for hours, wrong manual time): tolerate 10 min ahead. Beyond that it's broken or
+// forged to pin a record. SOS can't be pinned anyway (immutable once seen); a medic record for 10 min at most.
+export const MAX_FUTURE_MS = 10 * 60 * 1000;
+const HEX64 = /^[0-9a-f]{64}$/;
+export const ON_SITE_M = 40; // a medic this close to an SOS counts as "sur place"
+const shortId = (s: unknown) => typeof s === 'string' && s.length > 0 && s.length <= 64;
+
+export const hashSecret = (secretHex: string) => bytesToHex(sha256(hexToBytes(secretHex)));
+const onSiteClose = (a: any, sos: { lat: number; lon: number }) =>
+  shortId(a.doneBy) && Number.isFinite(a.doneLat) && Number.isFinite(a.doneLon) &&
+  distanceM(a.doneLat, a.doneLon, sos.lat, sos.lon) <= ON_SITE_M;
+const opens = (proof: unknown, key: string | undefined) => typeof proof === 'string' && HEX64.test(proof) && !!key && hashSecret(proof) === key;
 
 const expired = (a: Alert, now: number) =>
   a.kind === 'medic' ? now - a.updatedAt >= MEDIC_TTL_MS : now - a.createdAt >= SOS_TTL_MS;
@@ -33,11 +63,16 @@ export function isValid(a: any, now = Date.now()): a is Alert {
     Number.isFinite(a.lat) && Math.abs(a.lat) <= 90 &&
     Number.isFinite(a.lon) && Math.abs(a.lon) <= 180 &&
     typeof a.note === 'string' && a.note.length <= 200 &&
-    a.status in RANK &&
-    (a.target === undefined || (typeof a.target === 'string' && a.target.length <= 64)) &&
+    Object.prototype.hasOwnProperty.call(RANK, a.status) &&
+    (a.target === undefined || shortId(a.target)) &&
+    (a.state === undefined || a.state === 'care' || a.state === 'help') &&
+    (a.by === undefined || shortId(a.by)) &&
+    // SOS: always a key; closed only with the matching proof; never "taken"
+    (a.kind === 'medic' || (typeof a.key === 'string' && HEX64.test(a.key) &&
+      (a.status === 'need' || (a.status === 'done' && (opens(a.proof, a.key) || onSiteClose(a, a)))))) &&
     Number.isFinite(a.createdAt) && Number.isFinite(a.updatedAt) &&
     a.updatedAt >= a.createdAt &&
-    a.updatedAt <= now + 5 * 60 * 1000 && // tolerate 5 min of clock drift
+    a.updatedAt <= now + MAX_FUTURE_MS &&
     !expired(a, now)
   );
 }
@@ -57,9 +92,23 @@ export function merge(store: Store, incoming: unknown[], now = Date.now()): Aler
       id: raw.id, kind: raw.kind, lat: raw.lat, lon: raw.lon, note: raw.note,
       status: raw.status, createdAt: raw.createdAt, updatedAt: raw.updatedAt,
       ...(raw.target ? { target: raw.target } : {}),
+      ...(raw.state ? { state: raw.state } : {}),
+      ...(raw.key ? { key: raw.key } : {}),
+      ...(raw.proof ? { proof: raw.proof } : {}),
+      ...(raw.by ? { by: raw.by } : {}),
+      ...(raw.doneBy ? { doneBy: raw.doneBy, doneLat: raw.doneLat, doneLon: raw.doneLon } : {}),
     };
     const cur = store[a.id];
-    if (!cur || newer(a, cur)) {
+    if (cur && cur.kind !== a.kind) continue;
+    if (a.kind === 'sos' && cur) {
+      // Known SOS: content is frozen; the only accepted change is closing it, by its author (secret matching
+      // the key we already hold, not one the sender supplies) or by a medic within 40 m of where it is.
+      if (cur.status === 'done' || a.status !== 'done') continue;
+      const close = opens(a.proof, cur.key) ? { proof: a.proof } : onSiteClose(a, cur) ? { doneBy: a.doneBy, doneLat: a.doneLat, doneLon: a.doneLon } : null;
+      if (!close) continue;
+      store[a.id] = { ...cur, status: 'done', ...close, updatedAt: Math.max(a.updatedAt, cur.updatedAt) };
+      changed.push(store[a.id]);
+    } else if (!cur || newer(a, cur)) {
       store[a.id] = a;
       changed.push(a);
     }
@@ -98,15 +147,31 @@ export function distanceM(lat1: number, lon1: number, lat2: number, lon2: number
   return Math.sqrt(x * x + y * y) * 6371000;
 }
 
-export const ON_SITE_M = 40; // a medic this close to an SOS counts as "sur place"
 
-/** Medics heading to an SOS (declared "J'y vais") and medics physically at it (GPS only). */
-export function coverage(sos: Alert, medics: Alert[]) {
-  let enRoute = 0, onSite = 0;
+/** For every SOS: medics heading to it (declared "J'y vais") and medics physically at it (GPS, within 40 m).
+ *  A medic is counted at one SOS only: the one they head to, else the nearest within 40 m. Otherwise one medic
+ *  standing between two close casualties would show both as cared for. The SOS author never counts. */
+export function coverageAll(sos: Alert[], medics: Alert[]) {
+  const out = new Map(sos.map((s) => [s.id, { enRoute: 0, onSite: 0 }]));
+  const byId = new Map(sos.map((s) => [s.id, s]));
   for (const m of medics) {
-    if (sos.id.startsWith(m.id.slice(2))) continue; // SOS ids start with their author's per-launch id ('m-' + id for medics)
-    if (distanceM(m.lat, m.lon, sos.lat, sos.lon) <= ON_SITE_M) onSite++;
-    else if (m.target === sos.id) enRoute++;
+    const t = m.target ? byId.get(m.target) : undefined;
+    if (t) {
+      if (m.id === t.by) continue;
+      out.get(t.id)![distanceM(m.lat, m.lon, t.lat, t.lon) <= ON_SITE_M ? 'onSite' : 'enRoute']++;
+      continue;
+    }
+    let best: Alert | null = null, bestM = ON_SITE_M;
+    for (const s of sos) {
+      if (m.id === s.by) continue;
+      const d = distanceM(m.lat, m.lon, s.lat, s.lon);
+      if (d <= bestM) { best = s; bestM = d; }
+    }
+    if (best) out.get(best.id)!.onSite++;
   }
-  return { enRoute, onSite };
+  return out;
 }
+
+/** Coverage of one SOS (see coverageAll). */
+export const coverage = (sos: Alert, medics: Alert[], all: Alert[] = [sos]) =>
+  coverageAll(all.some((s) => s.id === sos.id) ? all : [...all, sos], medics).get(sos.id)!;

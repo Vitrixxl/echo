@@ -12,10 +12,18 @@ import java.nio.ByteBuffer
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 
-// Same UUIDs as ios/BleMeshModule.swift: that's the whole cross-platform contract.
-val SERVICE: UUID = UUID.fromString("6f0d7a10-5b8e-4c3a-9d4e-6d656469636d")
-val CHAR: UUID = UUID.fromString("6f0d7a11-5b8e-4c3a-9d4e-6d656469636d")
+// Same UUIDs as ios/BleMeshModule.swift: that's the whole cross-platform contract. Random, so nothing on the
+// air spells out what the app is.
+val SERVICE: UUID = UUID.fromString("dcbe3a65-8595-4490-8012-38f541bb1582")
+val CHAR: UUID = UUID.fromString("dcbe3a66-8595-4490-8012-38f541bb1582")
 const val HEADER = 6 // msgId u16, index u16, total u16
+// Reassembly limits: anyone can write to the GATT server, so partial messages must not pile up in memory.
+const val MAX_PARTS = 1024 // ~180 KB at a 185-byte MTU; real messages are a few KB
+const val MAX_PENDING_PER_PEER = 4
+const val MAX_PENDING = 64
+const val PENDING_MS = 15_000L
+
+class Partial(val parts: Array<ByteArray?>, val at: Long)
 
 /** One outgoing link: we are GATT client, the peer is GATT server. Writes are serialized. */
 class Link(val gatt: BluetoothGatt) {
@@ -32,7 +40,7 @@ class BleMeshModule : Module() {
   private var server: BluetoothGattServer? = null
   private val links = ConcurrentHashMap<String, Link>()
   private val lastTry = ConcurrentHashMap<String, Long>()
-  private val inbox = ConcurrentHashMap<String, Array<ByteArray?>>()
+  private val inbox = LinkedHashMap<String, Partial>() // insertion order = age; guarded by synchronized(inbox)
   private var msgId = 0
 
   override fun definition() = ModuleDefinition {
@@ -126,15 +134,29 @@ class BleMeshModule : Module() {
     val id = b.short.toInt() and 0xFFFF
     val index = b.short.toInt() and 0xFFFF
     val total = b.short.toInt() and 0xFFFF
-    if (total == 0 || index >= total || total > 4096) return
+    if (total == 0 || index >= total || total > MAX_PARTS) return
     val key = "$from:$id"
-    val parts = inbox.getOrPut(key) { arrayOfNulls(total) }
-    if (parts.size != total) { inbox.remove(key); return }
-    parts[index] = data.copyOfRange(HEADER, data.size)
-    if (parts.any { it == null }) return
-    inbox.remove(key)
-    val text = parts.fold(ByteArray(0)) { acc, p -> acc + p!! }.toString(Charsets.UTF_8)
-    sendEvent("onText", mapOf("peerId" to from, "text" to text))
+    val now = System.currentTimeMillis()
+    val parts: Array<ByteArray?>
+    synchronized(inbox) {
+      inbox.values.removeAll { now - it.at > PENDING_MS }
+      var p = inbox[key]
+      if (p == null) {
+        // Too many unfinished messages from this sender, or overall: forget the oldest.
+        inbox.keys.filter { it.startsWith("$from:") }.dropLast(MAX_PENDING_PER_PEER - 1).forEach { inbox.remove(it) }
+        while (inbox.size >= MAX_PENDING) inbox.remove(inbox.keys.first())
+        p = Partial(arrayOfNulls(total), now)
+        inbox[key] = p
+      }
+      if (p.parts.size != total) { inbox.remove(key); return }
+      p.parts[index] = data.copyOfRange(HEADER, data.size)
+      if (p.parts.any { it == null }) return
+      inbox.remove(key)
+      parts = p.parts
+    }
+    val out = java.io.ByteArrayOutputStream()
+    for (part in parts) out.write(part!!)
+    sendEvent("onText", mapOf("peerId" to from, "text" to out.toString(Charsets.UTF_8.name())))
   }
 
   private val serverCallback = object : BluetoothGattServerCallback() {
@@ -148,7 +170,7 @@ class BleMeshModule : Module() {
     }
 
     override fun onConnectionStateChange(device: BluetoothDevice, status: Int, newState: Int) {
-      if (newState == BluetoothProfile.STATE_DISCONNECTED) inbox.keys.removeAll { it.startsWith(device.address + ":") }
+      if (newState == BluetoothProfile.STATE_DISCONNECTED) synchronized(inbox) { inbox.keys.removeAll { it.startsWith(device.address + ":") } }
     }
   }
 

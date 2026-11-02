@@ -1,0 +1,6 @@
+<!-- BLE scans only look for other Brancard phones, never to locate anything: declaring it lets the mesh run on
+     Android 12+ for people who refuse precise location (the GPS is a separate permission). -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android" xmlns:tools="http://schemas.android.com/tools">
+  <uses-permission android:name="android.permission.BLUETOOTH_SCAN" android:usesPermissionFlags="neverForLocation"
+    tools:targetApi="s" />
+</manifest>

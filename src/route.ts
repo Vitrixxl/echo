@@ -3,7 +3,7 @@
 import { distanceM } from './alerts';
 
 export type LngLat = [number, number];
-type Graph = { nodes: LngLat[]; adj: { to: number; w: number }[][] };
+export type Graph = { nodes: LngLat[]; adj: { to: number; w: number }[][] };
 
 const SNAP_M = 3; // vertices closer than this are the same point (tile seams, rounding)
 const CELL = 3e-5; // grid cell in degrees (~3 m), for snapping lookups
@@ -90,6 +90,7 @@ function joinDeadEnds(nodes: LngLat[], adj: Graph['adj']) {
 }
 
 const SNAP_SLACK_M = 15; // streets this much further than the nearest one are also candidates
+const ACCESS_M = 12; // walker -> street legs shorter than this are dropped from the route
 
 /** Closest points on the street segments near `p` (not just the closest vertex: on a long straight
  *  street that vertex can be behind you). Every segment within SNAP_SLACK_M of the nearest one is a
@@ -105,7 +106,8 @@ function snaps(g: Graph, p: LngLat) {
     const q: LngLat = [a[0] + s * (b[0] - a[0]), a[1] + s * (b[1] - a[1])];
     all.push({ u, v, q, m: d(q, p) });
   }));
-  const best = Math.min(...all.map((c) => c.m));
+  let best = Infinity;
+  for (const c of all) best = Math.min(best, c.m); // no spread: tens of thousands of segments
   return best <= MAX_SNAP_M ? all.filter((c) => c.m <= best + SNAP_SLACK_M) : [];
 }
 
@@ -175,7 +177,11 @@ export function shortestPath(g: Graph, from: LngLat, to: LngLat): LngLat[] | nul
   if (dist[t] === Infinity) return null;
   const path: LngLat[] = [];
   for (let i = t; i >= 0; i = prev[i]) path.push(node(i));
-  return path.reverse();
+  path.reverse();
+  // The walker standing a few metres off the street centreline: start on the street itself. That short leg
+  // would otherwise read as a turn ("tourne à gauche dans 2 m") before the real directions.
+  if (path.length > 2 && d(path[0], path[1]) <= ACCESS_M) path.shift();
+  return path;
 }
 
 export function lengthM(path: LngLat[]) {
@@ -206,7 +212,9 @@ export function guidance(route: LngLat[], at: LngLat): Guidance | null {
     const dd = Math.hypot(p[0], p[1]);
     if (dd < best) { best = dd; seg = i; proj = p; }
   }
-  const ahead = simplify([proj, ...xy.slice(seg + 1)]);
+  // The walker's own point stays out of the simplification: a few metres before a corner it would be merged
+  // with it, and the next turn would be announced instead of this one.
+  const ahead = [proj, ...simplify(xy.slice(seg + 1))];
   let walked = 0, turn: Turn = 'arrive', toTurnM = -1;
   for (let k = 1; k < ahead.length; k++) {
     const [a, b] = [ahead[k - 1], ahead[k]];
