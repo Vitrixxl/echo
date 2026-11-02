@@ -1,13 +1,13 @@
 """A4 sheet of 20 square cards (48 mm) to cut out and hand around: icon, one line on what Écho
 does, a QR code to the download page. Vector PDF (crisp QR at any printer) + PNG preview.
 
-Usage: python3 -I make_flyer.py OUT.pdf [URL]   (needs bun (auto-installs qrcode for promo/qr.js) and the Inter font)
+Usage: python3 -I make_flyer.py OUT.pdf [URL]      the A4 sheet (+ OUT.png preview)
+       python3 -I make_flyer.py --qr URL OUT.png  one QR code with the icon in its centre   (needs bun (auto-installs qrcode for promo/qr.js) and the Inter font)
 """
 import json, os, subprocess, sys
 import cairo
 
-OUT = sys.argv[1]
-URL = sys.argv[2] if len(sys.argv) > 2 else "https://echo.vitrixxl.fr"
+NAME = "Écho"
 HERE = os.path.dirname(os.path.abspath(__file__))
 MM = 72 / 25.4
 W, H = 210, 297
@@ -16,7 +16,11 @@ X0, Y0 = (W - COLS * CARD) / 2, (H - ROWS * CARD) / 2
 RED = (0xE5 / 255, 0x48 / 255, 0x4D / 255)
 INK = (0.07, 0.07, 0.08)
 
-qr = json.loads(subprocess.check_output(["bun", "--install=force", os.path.join(HERE, "qr.js"), URL], cwd=HERE))
+
+
+def qrdata(url):
+    # Level H (30 % redundancy) so the icon covering the centre doesn't stop phones reading it.
+    return json.loads(subprocess.check_output(["bun", "--install=force", os.path.join(HERE, "qr.js"), url, "H"], cwd=HERE))
 
 
 def rrect(cr, x, y, w, h, r):
@@ -70,22 +74,29 @@ def text(cr, s, x, y, size, bold=True, color=INK, width=None, lead=1.25):
     return y
 
 
-def qrcode(cr, x, y, s):
+def qrcode(cr, x, y, s, qr, quiet=1):
     n = qr["size"]
-    m = s / (n + 2)  # 1-module quiet zone each side, the card is white anyway
+    m = s / (n + 2 * quiet)
     cr.set_source_rgb(*INK)
     for i, on in enumerate(qr["data"]):
         if on:
-            cr.rectangle(x + m * (1 + i % n), y + m * (1 + i // n), m * 1.02, m * 1.02)
+            cr.rectangle(x + m * (quiet + i % n), y + m * (quiet + i // n), m * 1.02, m * 1.02)
     cr.fill()
+    # Icon in the centre on a white plate: ~7 % of the code's area, well within level H's margin.
+    k = round(n * 0.26) | 1  # odd number of modules so it sits on the grid, centred
+    px, py = x + m * (quiet + (n - k) / 2), y + m * (quiet + (n - k) / 2)
+    cr.set_source_rgb(1, 1, 1)
+    rrect(cr, px, py, m * k, m * k, m * k * 0.24)
+    cr.fill()
+    icon(cr, px + m * 0.6, py + m * 0.6, m * (k - 1.2))
 
 
 def card(cr, x, y):
     p = 4
     icon(cr, x + p, y + p, 8)
-    text(cr, "Écho", x + p + 10.5, y + p + 6.1, 14)
+    text(cr, NAME, x + p + 10.5, y + p + 6.1, 14)
     text(cr, "Alerte les street medics\nautour de toi,\nmême sans réseau.", x + p, y + 17, 8.5, width=CARD - 2 * p, lead=1.22)
-    qrcode(cr, x + p - 0.6, y + 27, 18)
+    qrcode(cr, x + p - 0.6, y + 27, 18, SITE)
     b = text(cr, "Installe-la avant la manif", x + 23.5, y + 33, 7.5, width=20)
     text(cr, "echo.vitrixxl.fr", x + 23.5, b + 1.2, 6.5, bold=False, color=(0.3, 0.3, 0.32))
 
@@ -111,6 +122,18 @@ def page(surface, k=1):
     text(cr, "Découper le long des pointillés", X0, Y0 - 6, 7, bold=False, color=(0.55, 0.55, 0.57))
 
 
+if sys.argv[1] == "--qr":
+    url, out = sys.argv[2], sys.argv[3]
+    img = cairo.ImageSurface(cairo.FORMAT_RGB24, 1200, 1200)
+    cr = cairo.Context(img)
+    cr.set_source_rgb(1, 1, 1)
+    cr.paint()
+    qrcode(cr, 0, 0, 1200, qrdata(url), quiet=4)
+    img.write_to_png(out)
+    sys.exit()
+
+OUT = sys.argv[1]
+SITE = qrdata(sys.argv[2] if len(sys.argv) > 2 else "https://echo.vitrixxl.fr")
 pdf = cairo.PDFSurface(OUT, W * MM, H * MM)
 page(pdf)
 pdf.finish()
