@@ -1,4 +1,5 @@
 import { Ionicons } from '@expo/vector-icons';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
   Camera, GeoJSONSource, Layer, Map as MapView, Marker, type CameraRef, type MapRef,
 } from '@maplibre/maplibre-react-native';
@@ -8,6 +9,7 @@ import { StatusBar } from 'expo-status-bar';
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { ActivityIndicator, AppState, BackHandler, Keyboard, KeyboardAvoidingView, Linking, Pressable, ScrollView, StyleSheet, Text, TextInput, Vibration, View } from 'react-native';
 import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
+import Manif from './modules/manif';
 import { coverage, distanceM, type Alert as MeshRecord } from './src/alerts';
 import { ensurePermissions, useMesh } from './src/mesh';
 import { MAP_STYLE } from './src/mapStyle';
@@ -17,6 +19,7 @@ import { buildGraph, lengthM, shortestPath, type LngLat } from './src/route';
 // Walkable road layers of that style; the router reads their geometry from tiles on the phone.
 const ROAD_LAYERS = ['highway_path', 'highway_minor', 'highway_major_inner', 'highway_major_subtle', 'road_pier'];
 const WALK_MPS = 1.25;
+const MANIF_KEY = 'echo.manif.v1';
 const C = {
   bg: '#0F1115', card: '#171A21', line: '#262A33', text: '#F2F4F7', muted: '#9BA1A6',
   red: '#E5484D', orange: '#F5A524', green: '#30A46C', blue: '#3E8EF7',
@@ -233,6 +236,29 @@ function MapScreen({ role, city, onSwitch }: { role: Role; city: City | null; on
   const [routing, setRouting] = useState(false);
   const [, tick] = useState(0);
 
+  // Mode manif (Android): shown over the lock screen, GPS + relay kept alive screen off, alerts wake the screen.
+  const [manif, setManif] = useState(false);
+  const manifRef = useRef(manif);
+  manifRef.current = manif;
+  useEffect(() => { AsyncStorage.getItem(MANIF_KEY).then((v) => v === '1' && setManif(true), () => {}); }, []);
+  useEffect(() => {
+    if (!Manif) return;
+    if (manif) ensurePermissions().finally(() => Manif!.setActive(true)); // the service needs its permissions first
+    else Manif.setActive(false);
+  }, [manif]);
+  const toggleManif = () => {
+    const set = (on: boolean) => { setManif(on); AsyncStorage.setItem(MANIF_KEY, on ? '1' : '0').catch(() => {}); };
+    if (manif) return set(false);
+    setDialog({
+      icon: 'lock-open',
+      title: 'Mode manif',
+      body: "Écho s'affiche dès que tu rallumes l'écran, sans déverrouiller. Le reste du téléphone reste verrouillé."
+        + (role === 'medic' ? '\n\nUne nouvelle alerte allume l\'écran.' : '')
+        + "\n\nLe GPS et le relais des alertes restent actifs écran éteint : la batterie se vide plus vite.",
+      actions: [{ label: 'Annuler' }, { label: 'Activer', color: C.red, onPress: () => set(true) }],
+    });
+  };
+
   // GPS. Battery: medics need precise, frequent fixes ("sur place" is GPS-based); civilians
   // get a coarse, slow fix and stop entirely in the background.
   const gps = useRef<Location.LocationSubscription | null>(null);
@@ -261,7 +287,7 @@ function MapScreen({ role, city, onSwitch }: { role: Role; city: City | null; on
   useEffect(() => {
     startGps().catch(() => {});
     const app = AppState.addEventListener('change', (st) => {
-      if (role === 'medic') return; // medics keep broadcasting their position
+      if (role === 'medic' || manifRef.current) return; // medics and mode manif keep the GPS on
       if (st === 'active') startGps().catch(() => {});
       else stopGps();
     });
@@ -313,11 +339,13 @@ function MapScreen({ role, city, onSwitch }: { role: Role; city: City | null; on
     const a = mesh.incoming;
     if (!a || role !== 'medic') return;
     Vibration.vibrate([0, 500, 200, 500, 200, 500]);
-    if (AppState.currentState !== 'active')
-      Notifications.scheduleNotificationAsync({
-        content: { title: "🚨 Besoin d'un medic", body: [a.note, describe(a, posRef.current)].filter(Boolean).join(' · '), sound: 'default' },
-        trigger: { channelId: 'sos' },
-      }).catch(() => {});
+    const body = [a.note, describe(a, posRef.current)].filter(Boolean).join(' · ');
+    if (AppState.currentState === 'active') return;
+    if (manifRef.current && Manif) Manif.wake("🚨 Besoin d'un medic", body); // lights the screen, over the lock screen
+    else Notifications.scheduleNotificationAsync({
+      content: { title: "🚨 Besoin d'un medic", body, sound: 'default' },
+      trigger: { channelId: 'sos' },
+    }).catch(() => {});
   }, [mesh.incoming]);
 
   // Derived data, recomputed only when the mesh changes (not on every GPS fix).
@@ -499,6 +527,12 @@ function MapScreen({ role, city, onSwitch }: { role: Role; city: City | null; on
 
       {/* Bottom: featured alert card + SOS button (always reachable) */}
       <View style={[s.bottom, { paddingBottom: insets.bottom + 16 }]} pointerEvents="box-none">
+        {Manif && (
+          <Pressable style={({ pressed }) => [s.round, { alignSelf: 'flex-end', marginBottom: 12 }, manif && { backgroundColor: C.red }, pressed && s.pressed]}
+            accessibilityLabel="Mode manif" accessibilityState={{ checked: manif }} onPress={toggleManif}>
+            <Ionicons name="lock-open" size={20} color={C.text} />
+          </Pressable>
+        )}
         <Pressable style={({ pressed }) => [s.round, { alignSelf: 'flex-end', marginBottom: 12 }, pressed && s.pressed]} accessibilityLabel="Me recentrer" onPress={locate}>
           <Ionicons name="locate" size={20} color={C.text} />
         </Pressable>
