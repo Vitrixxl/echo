@@ -63,6 +63,7 @@ test('serves the tracts page: one card, the browser builds and prints the sheet'
   expect(html).toContain('<symbol id="card" viewBox="0 0 136.06 136.06">');
   expect(html).not.toContain('{{');
   expect(html).toContain('size:A4');
+  expect(html).toContain('TÉLÉCHARGER LE PDF'); // made in the browser by tractsPdf()
   expect((await fetch(url + '/tracts.pdf', { redirect: 'manual' })).headers.get('location')).toBe('/tracts');
   expect(await (await fetch(url + '/')).text()).toContain('href="/tracts"');
   s.stop();

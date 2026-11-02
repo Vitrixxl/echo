@@ -12,7 +12,9 @@ main{max-width:560px;margin:0 auto;padding:28px 24px 40px}
 .brand{display:flex;align-items:center;gap:10px;font-weight:800;font-size:19px;color:#F2F4F7;text-decoration:none}
 h1{font-size:clamp(32px,9vw,46px);line-height:1.05;font-weight:900;letter-spacing:-1px;margin:40px 0 0;text-transform:uppercase}
 .lead{color:#9BA1A6;font-size:17px;line-height:1.55;margin:16px 0 26px}
-button{display:flex;width:100%;align-items:center;justify-content:center;gap:12px;height:68px;border:0;border-radius:24px;background:#E5484D;color:#fff;font:inherit;font-weight:900;font-size:18px;letter-spacing:.3px;cursor:pointer;margin-bottom:24px}
+button{display:flex;width:100%;align-items:center;justify-content:center;gap:12px;height:68px;border:0;border-radius:24px;background:#E5484D;color:#fff;font:inherit;font-weight:900;font-size:18px;letter-spacing:.3px;cursor:pointer;margin-bottom:12px}
+button.alt{background:transparent;border:2px solid #262A33;margin-bottom:24px}
+button:disabled{opacity:.6;cursor:wait}
 .sheet{background:#fff;aspect-ratio:210/297;border-radius:6px;overflow:hidden}
 .sheet svg{display:block;width:100%;height:100%}
 @media print{
@@ -25,8 +27,9 @@ button{display:flex;width:100%;align-items:center;justify-content:center;gap:12p
 <a class="brand" href="/"><svg width="34" height="34" viewBox="0 0 100 100" aria-hidden="true"><rect width="100" height="100" rx="22" fill="#E5484D"/>
 <g fill="#fff"><rect x="21.62" y="76.66" width="56.76" height="3.97" rx="1.99"/><rect x="30.99" y="76.66" width="3.97" height="11.35" rx="1.99"/><rect x="65.04" y="76.66" width="3.97" height="11.35" rx="1.99"/><rect x="41.49" y="64.74" width="26.68" height="9.65" rx="4.82"/><circle cx="34.67" cy="69.28" r="4.82"/><circle cx="50" cy="33.66" r="18.06"/></g><g fill="#E5484D"><rect x="46.22" y="20.76" width="7.57" height="25.8" rx="3.78"/><rect x="37.1" y="29.88" width="25.8" height="7.57" rx="3.78"/></g></svg> Brancard</a>
 <h1>Tracts à imprimer</h1>
-<p class="lead">20 cartes par feuille A4. Imprime à 100&nbsp;% (ou choisis «&nbsp;Enregistrer en PDF&nbsp;»), découpe le long des pointillés, distribue dans le cortège.</p>
-<button onclick="print()"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linejoin="round" aria-hidden="true"><path d="M6 9V3h12v6M6 18H4a1 1 0 0 1-1-1v-6a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v6a1 1 0 0 1-1 1h-2M6 14h12v7H6z"/></svg> IMPRIMER LES TRACTS</button>
+<p class="lead">20 cartes par feuille A4. Imprime à 100&nbsp;%, découpe le long des pointillés, distribue dans le cortège.</p>
+<button id="dl" onclick="download()"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12M7 10l5 5 5-5M5 21h14"/></svg> TÉLÉCHARGER LE PDF</button>
+<button class="alt" onclick="print()"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linejoin="round" aria-hidden="true"><path d="M6 9V3h12v6M6 18H4a1 1 0 0 1-1-1v-6a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v6a1 1 0 0 1-1 1h-2M6 14h12v7H6z"/></svg> IMPRIMER LES TRACTS</button>
 <div class="sheet"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 210 297" role="img" aria-label="Feuille A4 de 20 cartes Brancard à découper">
 <defs><symbol id="card" viewBox="{{CARD_VIEWBOX}}">{{CARD}}</symbol></defs>
 <g id="cards"></g>
@@ -41,5 +44,54 @@ const el = (tag, attrs, parent) => { const e = document.createElementNS(N, tag);
 for (let r = 0; r < 5; r++) for (let c = 0; c < 4; c++) el('use', { href: '#card', x: X + c * C, y: Y + r * C, width: C, height: C }, 'cards');
 for (let c = 0; c <= 4; c++) el('line', { x1: X + c * C, y1: 4, x2: X + c * C, y2: 293 }, 'cuts');
 for (let r = 0; r <= 5; r++) el('line', { x1: 4, y1: Y + r * C, x2: 206, y2: Y + r * C }, 'cuts');
+
+// The PDF is made here too: the sheet is drawn at 300 dpi and wrapped in a one-page A4 PDF (a JPEG image,
+// written by hand below, no library). Nothing is downloaded from the server.
+async function tractsPdf() {
+  const W = 2480, H = 3508; // A4 at 300 dpi
+  const svg = document.querySelector('.sheet svg').cloneNode(true);
+  svg.setAttribute('width', W);
+  svg.setAttribute('height', H);
+  const img = new Image();
+  img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(new XMLSerializer().serializeToString(svg));
+  await img.decode();
+  const canvas = Object.assign(document.createElement('canvas'), { width: W, height: H });
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = '#fff';
+  ctx.fillRect(0, 0, W, H);
+  ctx.drawImage(img, 0, 0, W, H);
+  const b64 = atob(canvas.toDataURL('image/jpeg', 0.92).split(',')[1]); // toBlob can stall in some browsers
+  const jpg = Uint8Array.from(b64, (c) => c.charCodeAt(0));
+  const enc = new TextEncoder(), parts = [], offsets = [];
+  let size = 0;
+  const put = (x) => { const b = typeof x === 'string' ? enc.encode(x) : x; parts.push(b); size += b.length; };
+  const obj = (n, body) => { offsets[n] = size; put(`${n} 0 obj\n${body}\nendobj\n`); };
+  const page = 'q 595.28 0 0 841.89 0 0 cm /Im0 Do Q';
+  put('%PDF-1.4\n');
+  obj(1, '<< /Type /Catalog /Pages 2 0 R >>');
+  obj(2, '<< /Type /Pages /Kids [3 0 R] /Count 1 >>');
+  obj(3, '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595.28 841.89] /Resources << /XObject << /Im0 4 0 R >> >> /Contents 5 0 R >>');
+  offsets[4] = size;
+  put(`4 0 obj\n<< /Type /XObject /Subtype /Image /Width ${W} /Height ${H} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length ${jpg.length} >>\nstream\n`);
+  put(jpg);
+  put('\nendstream\nendobj\n');
+  obj(5, `<< /Length ${page.length} >>\nstream\n${page}\nendstream`);
+  const xref = size;
+  put(`xref\n0 6\n0000000000 65535 f \n${offsets.slice(1).map((o) => String(o).padStart(10, '0') + ' 00000 n \n').join('')}`);
+  put(`trailer\n<< /Size 6 /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`);
+  return new Blob(parts, { type: 'application/pdf' });
+}
+
+async function download() {
+  const b = document.getElementById('dl');
+  b.disabled = true;
+  try {
+    const a = Object.assign(document.createElement('a'), { href: URL.createObjectURL(await tractsPdf()), download: 'brancard-tracts-a4.pdf' });
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 10000);
+  } finally {
+    b.disabled = false;
+  }
+}
 </script>
 </body></html>
