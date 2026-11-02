@@ -38,6 +38,11 @@ const C = {
 };
 // One dim for every overlay: dark enough that the white map doesn't wash through.
 const DIM = C.bg + 'D9';
+// Fills that carry text or icons, deep enough for 4.5:1 with white in daylight. The bright C.* hues
+// stay for dots, map pins and icons on the dark surfaces; orange keeps its hue and takes dark ink.
+const FILL: Record<string, string> = { [C.red]: '#D93A40', [C.green]: '#24804F', [C.blue]: '#2563D6' };
+const fill = (c: string) => FILL[c] ?? c;
+const ink = (c: string) => (c === C.orange ? '#111' : '#fff');
 const TAGS = ['Blessure', 'Saignement', 'Gaz lacrymo', 'Malaise', 'Inconscient', 'Brûlure'];
 
 type Role = 'medic' | 'civil';
@@ -188,7 +193,7 @@ function DialogModal({ dialog, onClose }: { dialog: Dialog | null; onClose: () =
         <Pressable style={StyleSheet.absoluteFill} onPress={onClose} />
         <View style={s.dialog}>
           <View style={s.row}>
-            {dialog.icon && <View style={[s.dialogIcon, { backgroundColor: dialog.tone ?? C.red }]}><Ionicons name={dialog.icon} size={36} color="#fff" /></View>}
+            {dialog.icon && <View style={[s.dialogIcon, { backgroundColor: fill(dialog.tone ?? C.red) }]}><Ionicons name={dialog.icon} size={36} color={ink(dialog.tone ?? C.red)} /></View>}
             <Text style={[s.sheetTitle, { flex: 1 }]}>{dialog.title}</Text>
           </View>
           {!!dialog.body && <Text style={s.dialogBody}>{dialog.body}</Text>}
@@ -636,17 +641,17 @@ function MapScreen({ role, city, onSwitch }: { role: Role; city: City | null; on
 
       {/* Bottom: featured alert card + SOS button (always reachable) */}
       {!nav && <View style={[s.bottom, { paddingBottom: insets.bottom + 16 }]} pointerEvents="box-none">
-        <View style={[s.row, { marginBottom: 12 }]} pointerEvents="box-none">
+        <View style={[s.row, { marginBottom: 12, flexWrap: 'wrap' }]} pointerEvents="box-none">
         {Manif && (
-          <Pressable style={({ pressed }) => [s.pill, manif && { backgroundColor: C.red }, pressed && s.pressed]}
+          <Pressable style={({ pressed }) => [s.pill, manif && { backgroundColor: fill(C.red) }, pressed && s.pressed]}
             accessibilityRole="switch" accessibilityState={{ checked: manif }} onPress={toggleManif}>
-            <Ionicons name="lock-open" size={18} color={C.text} />
-            <Text style={s.pillText}>{manif ? 'Mode manif activé' : 'Mode manif'}</Text>
+            <Ionicons name={manif ? 'checkmark-circle' : 'lock-open'} size={18} color={C.text} />
+            <Text style={s.pillText}>Mode manif</Text>
           </Pressable>
         )}
-        <Pressable style={({ pressed }) => [s.pill, eco && { backgroundColor: C.green }, pressed && s.pressed]}
+        <Pressable style={({ pressed }) => [s.pill, eco && { backgroundColor: fill(C.green) }, pressed && s.pressed]}
           accessibilityRole="switch" accessibilityState={{ checked: eco }} onPress={toggleEco}>
-          <Ionicons name="leaf" size={16} color={C.text} />
+          <Ionicons name={eco ? 'checkmark-circle' : 'leaf'} size={18} color={C.text} />
           <Text style={s.pillText}>Éco batterie</Text>
         </Pressable>
         <Pressable style={({ pressed }) => [s.round, { marginLeft: 'auto' }, pressed && s.pressed]} accessibilityLabel="Me recentrer" onPress={locate}>
@@ -781,9 +786,9 @@ const SosMarker = memo(function SosMarker(p: {
 function Btn(p: { label?: string; icon?: any; a11y?: string; color: string; busy?: boolean; onPress: () => void }) {
   return (
     <Pressable onPress={p.onPress} accessibilityRole="button" accessibilityLabel={p.label ?? p.a11y}
-      style={({ pressed }) => [s.btn, !p.label && s.iconBtn, { backgroundColor: p.color }, pressed && s.pressed]}>
-      {p.busy ? <ActivityIndicator color="#fff" /> : p.icon && <Ionicons name={p.icon} size={22} color="#fff" />}
-      {!!p.label && <Text style={s.btnText}>{p.label}</Text>}
+      style={({ pressed }) => [s.btn, !p.label && s.iconBtn, { backgroundColor: fill(p.color) }, pressed && s.pressed]}>
+      {p.busy ? <ActivityIndicator color={ink(p.color)} /> : p.icon && <Ionicons name={p.icon} size={22} color={ink(p.color)} />}
+      {!!p.label && <Text style={[s.btnText, { color: ink(p.color) }]}>{p.label}</Text>}
     </Pressable>
   );
 }
@@ -810,14 +815,14 @@ const s = StyleSheet.create({
   roleBody: { color: C.muted, fontSize: 14, lineHeight: 19, marginTop: 3 },
 
   top: { position: 'absolute', left: 12, right: 12, flexDirection: 'row', gap: 8 },
-  pill: { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: C.card + 'F2', borderRadius: 22, height: 44, paddingHorizontal: 14, ...shadow },
+  pill: { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: C.card + 'F2', borderRadius: 24, height: 48, paddingHorizontal: 16, ...shadow },
   pillText: { color: C.text, fontWeight: '700', fontSize: 14 },
   pillMuted: { color: C.muted },
-  round: { width: 44, height: 44, borderRadius: 22, backgroundColor: C.card + 'F2', alignItems: 'center', justifyContent: 'center', ...shadow },
+  round: { width: 48, height: 48, borderRadius: 24, backgroundColor: C.card + 'F2', alignItems: 'center', justifyContent: 'center', ...shadow },
   dot: { width: 10, height: 10, borderRadius: 5 },
   err: { position: 'absolute', left: 12, right: 12, flexDirection: 'row', alignItems: 'center', gap: 10, backgroundColor: C.orange, padding: 14, borderRadius: 24, ...shadow },
   errText: { flex: 1, color: '#111', fontWeight: '600', fontSize: 14, lineHeight: 19 },
-  banner: { position: 'absolute', left: 12, right: 12, flexDirection: 'row', alignItems: 'center', gap: 12, backgroundColor: C.red, borderRadius: 24, padding: 14, ...shadow },
+  banner: { position: 'absolute', left: 12, right: 12, flexDirection: 'row', alignItems: 'center', gap: 12, backgroundColor: fill(C.red), borderRadius: 24, padding: 14, ...shadow },
   bannerTitle: { color: '#fff', fontWeight: '800', fontSize: 15 },
   bannerBody: { color: '#fff', opacity: 0.9, marginTop: 2 },
 
@@ -830,7 +835,7 @@ const s = StyleSheet.create({
   statText: { color: C.text, fontWeight: '700', fontSize: 13 },
 
   bottom: { position: 'absolute', left: 16, right: 16, bottom: 0 },
-  sos: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 12, height: 72, borderRadius: 24, backgroundColor: C.red, ...shadow },
+  sos: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 12, height: 72, borderRadius: 24, backgroundColor: fill(C.red), ...shadow },
   sosText: { color: '#fff', fontSize: 19, fontWeight: '900', letterSpacing: 0.5 },
   card: { backgroundColor: C.card, borderRadius: 24, padding: 18, ...shadow },
   row: { flexDirection: 'row', alignItems: 'center', gap: 10 },
@@ -843,19 +848,19 @@ const s = StyleSheet.create({
   btnText: { color: '#fff', fontWeight: '800', fontSize: 16 },
 
   sheet: { backgroundColor: C.card, borderTopLeftRadius: 24, borderTopRightRadius: 24, paddingTop: 22, paddingHorizontal: 16 }, // 16: confirm lands exactly on the SOS button
-  closeBtn: { marginLeft: 'auto', width: 40, height: 40, borderRadius: 20, backgroundColor: C.line, alignItems: 'center', justifyContent: 'center' },
+  closeBtn: { marginLeft: 'auto', width: 48, height: 48, borderRadius: 24, backgroundColor: C.line, alignItems: 'center', justifyContent: 'center' },
   sheetTitle: { color: C.text, fontSize: 22, fontWeight: '800' },
   label: { color: C.muted, fontSize: 13, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.5 },
   tags: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 10 },
-  tag: { paddingHorizontal: 14, height: 38, borderRadius: 19, borderWidth: 1, borderColor: C.line, justifyContent: 'center' },
-  tagOn: { backgroundColor: C.red, borderColor: C.red },
+  tag: { paddingHorizontal: 16, height: 44, borderRadius: 22, borderWidth: 1, borderColor: C.line, justifyContent: 'center' },
+  tagOn: { backgroundColor: fill(C.red), borderColor: fill(C.red) },
   tagText: { color: C.text, fontWeight: '600' },
   input: { marginTop: 12, height: 50, borderRadius: 14, backgroundColor: C.bg, color: C.text, paddingHorizontal: 14, fontSize: 15, borderWidth: 1, borderColor: C.line },
   cancelText: { color: C.muted, fontWeight: '700', fontSize: 16 },
 
   dialogWrap: { flex: 1, justifyContent: 'center', padding: 24 },
   dialog: { backgroundColor: C.card, borderRadius: 24, padding: 18, ...shadow },
-  nav: { position: 'absolute', left: 12, right: 12, minHeight: 168, flexDirection: 'row', alignItems: 'center', gap: 16, backgroundColor: C.blue, borderRadius: 28, padding: 20, ...shadow },
+  nav: { position: 'absolute', left: 12, right: 12, minHeight: 168, flexDirection: 'row', alignItems: 'center', gap: 16, backgroundColor: fill(C.blue), borderRadius: 24, padding: 20, ...shadow },
   navIcon: { width: 96, height: 96, borderRadius: 24, backgroundColor: '#ffffff26', alignItems: 'center', justifyContent: 'center' },
   navBig: { color: '#fff', fontSize: 44, fontWeight: '900' },
   navText: { color: '#fff', fontSize: 21, fontWeight: '800', marginTop: 2 },
