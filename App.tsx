@@ -576,7 +576,7 @@ function MapScreen({ role, city, onSwitch }: { role: Role; city: City | null; on
         </Pressable>
         <View style={[s.pill, { flex: 1 }]}>
           <Ionicons name="git-network" size={15} color={mesh.peerCount ? C.green : C.muted} />
-          <Text style={s.pillText}>{mesh.peerCount} relais</Text>
+          <Text style={[s.pillText, { flexShrink: 1 }]} numberOfLines={1}>{mesh.peerCount} relais</Text>
           <Text style={s.pillMuted}>·</Text>
           <Ionicons name="medkit" size={14} color={C.green} />
           <Text style={s.pillText}>{medics.length}</Text>
