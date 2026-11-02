@@ -1,8 +1,10 @@
-"""A4 sheet of 20 square cards (48 mm) to cut out and hand around: icon, one line on what Brancard
-does, a QR code to the download page. Vector PDF (crisp QR at any printer) + PNG preview.
+"""A4 sheet of 20 square cards (48 mm) to cut out and hand around: logo, what Brancard does, a QR
+code to the download page. Vector PDF (crisp QR at any printer) + PNG preview.
+Every line break is set by hand and every block sized to fit its column: nothing wraps by accident.
 
 Usage: python3 -I make_flyer.py OUT.pdf [URL]      the A4 sheet (+ OUT.png preview)
-       python3 -I make_flyer.py --qr URL OUT.png  one QR code with the icon in its centre   (needs bun (auto-installs qrcode for promo/qr.js) and the Inter font)
+       python3 -I make_flyer.py --qr URL OUT.png  one QR code, plain
+Needs bun (auto-installs qrcode for promo/qr.js) and the Inter font.
 """
 import json, os, subprocess, sys
 import cairo
@@ -22,8 +24,8 @@ INK = (0.07, 0.07, 0.08)
 
 
 def qrdata(url):
-    # Level H (30 % redundancy) so the icon covering the centre doesn't stop phones reading it.
-    return json.loads(subprocess.check_output(["bun", "--install=force", os.path.join(HERE, "qr.js"), url, "H"], cwd=HERE))
+    # Level M: nothing covers the code, so bigger modules beat extra redundancy.
+    return json.loads(subprocess.check_output(["bun", "--install=force", os.path.join(HERE, "qr.js"), url, "M"], cwd=HERE))
 
 
 def rrect(cr, x, y, w, h, r):
@@ -75,23 +77,53 @@ def qrcode(cr, x, y, s, qr, quiet=1):
         if on:
             cr.rectangle(x + m * (quiet + i % n), y + m * (quiet + i // n), m * 1.02, m * 1.02)
     cr.fill()
-    # Icon as a badge on the bottom-right corner (the one without a finder pattern): centred on the
-    # corner point, it hides only ~3x3 modules, which level H recovers.
-    b = m * 7
-    cx, cy = x + m * (quiet + n), y + m * (quiet + n)
-    cr.set_source_rgb(1, 1, 1)
-    rrect(cr, cx - b / 2, cy - b / 2, b, b, b * 0.26)
-    cr.fill()
-    icon(cr, cx - b / 2 + m * 0.6, cy - b / 2 + m * 0.6, b - m * 1.2)
+
+
+def font(cr, size, bold=True):
+    cr.select_font_face("Inter", cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_BOLD if bold else cairo.FONT_WEIGHT_NORMAL)
+    cr.set_font_size(size / MM)
+
+
+def fit(cr, lines, width, size, bold=True):
+    """Largest size (pt, down from `size`) at which every line fits `width` mm."""
+    while size > 5:
+        font(cr, size, bold)
+        if max(cr.text_extents(ln).x_advance for ln in lines) <= width:
+            return size
+        size -= 0.1
+    return size
+
+
+def block(cr, lines, x, y, size, color=INK, bold=True, lead=1.2):
+    """Hand-broken lines from baseline y. Returns the last baseline."""
+    font(cr, size, bold)
+    cr.set_source_rgb(*color)
+    for k, ln in enumerate(lines):
+        cr.move_to(x, y + k * size / MM * lead)
+        cr.show_text(ln)
+        cr.new_path()
+    return y + (len(lines) - 1) * size / MM * lead
+
+
+P = 4  # card margin, also the QR code's quiet zone on its free sides
+MESSAGE = ["Alerte les street medics", "autour de toi, sans réseau."]
+CTA = ["Installe-la", "avant", "la manif."]
 
 
 def card(cr, x, y):
-    p = 3.5
-    icon(cr, x + p, y + p, 7)
-    text(cr, NAME, x + p + 9, y + p + 5.4, 13)
-    text(cr, "Alerte les street medics\nautour de toi,\nmême sans réseau.", x + p, y + 14.2, 8, width=CARD - 2 * p, lead=1.18)
-    qrcode(cr, x + p - 0.7, y + 21.8, 22, SITE)
-    text(cr, "Installe-la avant la manif", x + 28.5, y + 31, 7.5, width=CARD - 28.5 - p)
+    inner = CARD - 2 * P
+    # Brand: logo tile, name centred on it (Inter cap height = 0.727 em).
+    icon(cr, x + P, y + P, 8)
+    block(cr, [NAME], x + P + 10.5, y + P + 4 + 14 / MM * 0.727 / 2, 14)
+    # Message: two lines set to the full measure.
+    m = fit(cr, MESSAGE, inner, 9)
+    last = block(cr, MESSAGE, x + P, y + 16.8, m)
+    # Action: the code at the bottom-left, the call to action stacked beside it, bottoms aligned.
+    q = CARD - P - (last + 3.2 - y)  # same 2.5 mm gap under the message as above it
+    qrcode(cr, x + P, y + CARD - P - q, q, SITE, quiet=0)
+    col = inner - q - 3
+    c = fit(cr, CTA, col, 10.5)
+    block(cr, CTA, x + P + q + 3, y + CARD - P - 0.2 - (len(CTA) - 1) * c / MM * 1.12, c, color=RED, lead=1.12)
 
 
 def page(surface, k=1):
