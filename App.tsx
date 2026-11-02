@@ -411,7 +411,7 @@ function MapScreen({ role, city, onSwitch }: { role: Role; city: City | null; on
   const goingTo = sos.find((r) => r.id === going);
   const leftM = !nav || !pos ? 0 : g?.leftM ?? (goingTo ? distanceM(pos.lat, pos.lon, goingTo.lat, goingTo.lon) : nav.m);
   const arrived = !!nav && leftM < ARRIVED_M;
-  const topH = nav ? 186 : 64; // banners sit under the top bar, or under the direction block
+  const topH = nav ? 92 : 64; // banners sit under the top bar, or under the direction block
   const { height: screenH } = useWindowDimensions();
 
   const sel = sos.find((r) => r.id === selected) ?? null;
@@ -443,7 +443,7 @@ function MapScreen({ role, city, onSwitch }: { role: Role; city: City | null; on
   const rendered = useRef<(() => void) | null>(null);
   // Padding keeps the medic in the clear area between the direction block and the alert card
   // (camera padding sticks, so every other move resets it with NO_PAD).
-  const navPad = { top: insets.top + 190, bottom: 470, left: 0, right: 0 };
+  const navPad = { top: insets.top + 110, bottom: insets.bottom + 190, left: 40, right: 40 };
   const computeRoute = async (r: MeshRecord, zoomOnMe = false) => {
     const p = posRef.current;
     if (!p || !map.current || routing) return;
@@ -469,7 +469,11 @@ function MapScreen({ role, city, onSwitch }: { role: Role; city: City | null; on
     setRoute({ to: r.id, coords, m: lengthM(coords), exact: !!path });
     setRouting(false);
     // "J'y vais": once the route is read from the tiles, put the medic's own position up close.
-    if (zoomOnMe) cam.current?.flyTo({ center: from, zoom: 18.5, duration: 700, padding: navPad });
+    // "J'y vais": the whole route, framed between the direction block and the bottom panel.
+    if (zoomOnMe) {
+      const xs = coords.map((c) => c[0]), ys = coords.map((c) => c[1]);
+      cam.current?.fitBounds([Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)], { padding: navPad, duration: 700 });
+    }
   };
 
   const closeSheet = useCallback(() => setSheet(null), []);
@@ -551,17 +555,17 @@ function MapScreen({ role, city, onSwitch }: { role: Role; city: City | null; on
         return (
           <View style={[s.nav, { top: insets.top + 8 }]}>
             <View style={s.navIcon}>
-              <Ionicons name={here ? 'flag' : !g ? 'navigate' : off ? 'help' : TURN[turn].icon} size={64} color="#fff"
+              <Ionicons name={here ? 'flag' : !g ? 'navigate' : off ? 'help' : TURN[turn].icon} size={34} color="#fff"
                 style={g && !off && !here ? { transform: [{ rotate: TURN[turn].rot }] } : undefined} />
             </View>
             <View style={{ flex: 1 }}>
-              {here ? <Text style={s.navBig}>Tu es arrivé·e</Text>
-                : off ? <Text style={s.navBig}>Hors du chemin</Text>
-                : <Text style={s.navBig}>{fmtM(g ? g.toTurnM : leftM)}</Text>}
-              <Text style={s.navText}>
-                {here ? 'La personne est à moins de 25 m' : !g ? "À vol d'oiseau, pas de rue sur la carte" : off ? `Tu es à ${fmtM(g.offM)} de l'itinéraire` : TURN[turn].label}
+              <Text style={s.navBig} numberOfLines={1}>
+                {here ? 'Tu es arrivé·e' : off ? 'Hors du chemin' : fmtM(g ? g.toTurnM : leftM)}
+                {!here && !off && <Text style={s.navText}>{'  '}{!g ? "à vol d'oiseau" : TURN[turn].label}</Text>}
               </Text>
-              {!here && <Text style={s.navMeta}>Arrivée · {Math.max(1, Math.round(leftM / WALK_MPS / 60))} min · {fmtM(leftM)}</Text>}
+              <Text style={s.navMeta} numberOfLines={1}>
+                {here ? 'La personne est à moins de 25 m' : off ? `À ${fmtM(g.offM)} de l'itinéraire` : `Arrivée dans ${Math.max(1, Math.round(leftM / WALK_MPS / 60))} min · ${fmtM(leftM)}`}
+              </Text>
             </View>
             {off && goingTo && <Btn icon="refresh" a11y="Recalculer l'itinéraire" color="#ffffff33" busy={routing} onPress={() => computeRoute(goingTo, true)} />}
           </View>
@@ -616,25 +620,17 @@ function MapScreen({ role, city, onSwitch }: { role: Role; city: City | null; on
             <Pressable style={({ pressed }) => [s.round, { alignSelf: 'flex-end', marginBottom: 12 }, pressed && s.pressed]} accessibilityLabel="Me recentrer" onPress={locate}>
               <Ionicons name="locate" size={20} color={C.text} />
             </Pressable>
-            <View style={[s.card, { marginBottom: 12 }]}>
-              {!!goingTo.note && <Text style={[s.cardNote, { marginTop: 0, marginBottom: 12 }]} numberOfLines={2}>{goingTo.note}</Text>}
-              <View style={s.row}>
-                <View style={s.navStat}>
-                  <Ionicons name="medkit" size={24} color={C.green} />
-                  <View style={{ flexShrink: 1 }}><Text style={s.navStatN}>{c.onSite}</Text><Text style={s.navStatL}>sur place</Text></View>
-                </View>
-                <View style={s.navStat}>
-                  <Ionicons name="walk" size={24} color={C.orange} />
-                  <View style={{ flexShrink: 1 }}><Text style={s.navStatN}>{c.enRoute}</Text><Text style={s.navStatL}>en route, sans toi</Text></View>
-                </View>
+            <View style={s.navPanel}>
+              {!!goingTo.note && <Text style={s.navNote} numberOfLines={1}>{goingTo.note}</Text>}
+              <View style={[s.row, { flexWrap: 'wrap' }]}>
+                <View style={s.stat}><Ionicons name="medkit" size={14} color={C.green} /><Text style={s.statText}>{c.onSite} sur place</Text></View>
+                <View style={s.stat}><Ionicons name="walk" size={14} color={C.orange} /><Text style={s.statText}>{c.enRoute} en route, sans toi</Text></View>
               </View>
-              {arrived && <View style={[s.row, { marginTop: 12 }]}><Btn label="Résolu" color={C.green} onPress={() => resolve(goingTo.id)} /></View>}
+              <View style={[s.row, { marginTop: 10 }]}>
+                <Btn icon="close" label="Annuler le trajet" color={C.line} onPress={() => { setGoing(null); setRoute(null); }} />
+                {arrived && <Btn label="Résolu" color={C.green} onPress={() => resolve(goingTo.id)} />}
+              </View>
             </View>
-            <Pressable onPress={() => { setGoing(null); setRoute(null); }} style={({ pressed }) => [s.sos, { backgroundColor: C.line }, pressed && s.pressed]}
-              accessibilityRole="button">
-              <Ionicons name="close" size={28} color="#fff" />
-              <Text style={s.sosText}>ANNULER LE TRAJET</Text>
-            </Pressable>
           </View>
         );
       })()}
@@ -643,16 +639,16 @@ function MapScreen({ role, city, onSwitch }: { role: Role; city: City | null; on
       {!nav && <View style={[s.bottom, { paddingBottom: insets.bottom + 16 }]} pointerEvents="box-none">
         <View style={[s.row, { marginBottom: 12, flexWrap: 'wrap' }]} pointerEvents="box-none">
         {Manif && (
-          <Pressable style={({ pressed }) => [s.pill, manif && { backgroundColor: fill(C.red) }, pressed && s.pressed]}
+          <Pressable style={({ pressed }) => [s.chip, manif && { backgroundColor: fill(C.red) }, pressed && s.pressed]} hitSlop={6}
             accessibilityRole="switch" accessibilityState={{ checked: manif }} onPress={toggleManif}>
-            <Ionicons name={manif ? 'checkmark-circle' : 'lock-open'} size={18} color={C.text} />
-            <Text style={s.pillText}>Mode manif</Text>
+            <Ionicons name={manif ? 'checkmark-circle' : 'lock-open'} size={15} color={C.text} />
+            <Text style={s.chipText}>Mode manif</Text>
           </Pressable>
         )}
-        <Pressable style={({ pressed }) => [s.pill, eco && { backgroundColor: fill(C.green) }, pressed && s.pressed]}
+        <Pressable style={({ pressed }) => [s.chip, eco && { backgroundColor: fill(C.green) }, pressed && s.pressed]} hitSlop={6}
           accessibilityRole="switch" accessibilityState={{ checked: eco }} onPress={toggleEco}>
-          <Ionicons name={eco ? 'checkmark-circle' : 'leaf'} size={18} color={C.text} />
-          <Text style={s.pillText}>Éco batterie</Text>
+          <Ionicons name={eco ? 'checkmark-circle' : 'leaf'} size={15} color={C.text} />
+          <Text style={s.chipText}>Éco batterie</Text>
         </Pressable>
         <Pressable style={({ pressed }) => [s.round, { marginLeft: 'auto' }, pressed && s.pressed]} accessibilityLabel="Me recentrer" onPress={locate}>
           <Ionicons name="locate" size={20} color={C.text} />
@@ -818,6 +814,8 @@ const s = StyleSheet.create({
   top: { position: 'absolute', left: 12, right: 12, flexDirection: 'row', gap: 8 },
   pill: { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: C.card + 'F2', borderRadius: 24, height: 48, paddingHorizontal: 16, ...shadow },
   pillText: { color: C.text, fontWeight: '700', fontSize: 14 },
+  chip: { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: C.card + 'F2', borderRadius: 18, height: 36, paddingHorizontal: 12, ...shadow },
+  chipText: { color: C.text, fontWeight: '700', fontSize: 13 },
   pillMuted: { color: C.muted },
   round: { width: 48, height: 48, borderRadius: 24, backgroundColor: C.card + 'F2', alignItems: 'center', justifyContent: 'center', ...shadow },
   dot: { width: 10, height: 10, borderRadius: 5 },
@@ -861,14 +859,13 @@ const s = StyleSheet.create({
 
   dialogWrap: { flex: 1, justifyContent: 'center', padding: 24 },
   dialog: { backgroundColor: C.card, borderRadius: 24, padding: 18, ...shadow },
-  nav: { position: 'absolute', left: 12, right: 12, minHeight: 168, flexDirection: 'row', alignItems: 'center', gap: 16, backgroundColor: fill(C.blue), borderRadius: 24, padding: 20, ...shadow },
-  navIcon: { width: 96, height: 96, borderRadius: 24, backgroundColor: '#ffffff26', alignItems: 'center', justifyContent: 'center' },
-  navBig: { color: '#fff', fontSize: 44, fontWeight: '900' },
-  navText: { color: '#fff', fontSize: 21, fontWeight: '800', marginTop: 2 },
-  navMeta: { color: '#ffffffD9', fontSize: 15, marginTop: 6 },
-  navStat: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 12, backgroundColor: C.bg, borderRadius: 14, padding: 14 },
-  navStatN: { color: C.text, fontSize: 26, fontWeight: '900' },
-  navStatL: { color: C.muted, fontSize: 13, fontWeight: '600' },
+  nav: { position: 'absolute', left: 12, right: 12, flexDirection: 'row', alignItems: 'center', gap: 12, backgroundColor: fill(C.blue), borderRadius: 20, padding: 12, ...shadow },
+  navIcon: { width: 52, height: 52, borderRadius: 14, backgroundColor: '#ffffff26', alignItems: 'center', justifyContent: 'center' },
+  navBig: { color: '#fff', fontSize: 26, fontWeight: '900' },
+  navText: { color: '#fff', fontSize: 17, fontWeight: '700' },
+  navMeta: { color: '#ffffffD9', fontSize: 14, marginTop: 2 },
+  navPanel: { backgroundColor: C.card, borderRadius: 20, padding: 12, ...shadow },
+  navNote: { color: C.text, fontSize: 15, fontWeight: '600', marginBottom: 8 },
   dialogIcon: { width: 64, height: 64, borderRadius: 20, backgroundColor: C.red, alignItems: 'center', justifyContent: 'center', marginRight: 4 },
   dialogBody: { color: C.muted, fontSize: 15, lineHeight: 21, marginTop: 8 },
   bar: { height: 10, borderRadius: 5, backgroundColor: C.line, marginTop: 14, overflow: 'hidden' },
