@@ -1,7 +1,8 @@
 // Brancard server, hosted by pihost (compose.yaml at the repo root). Stores nothing about anyone.
 //   GET  /                         download page (the "link in bio"), page.html
 //   GET  /download                 latest APK
-//   GET  /tracts.pdf               A4 sheet of cards to print, cut and hand around (promo/make_flyer.py)
+//   GET  /tracts                   A4 sheet of cards to print, cut and hand around: the browser builds it from one
+//                                  card (card.svg, from promo/make_flyer.py --card-svg) and prints it or saves a PDF
 //   GET  /count, POST /install     install counter (one install per IP per hour, IPs only kept in memory)
 //   GET  /updates/manifest         expo-updates protocol 1: the signed manifest for the phone's runtime, or 204
 //   GET  /updates/assets/:sha256   update files
@@ -11,7 +12,7 @@
 // Env: PORT=8787, DATA=./data, DEPLOY_TOKEN, TRUST_PROXY=1 behind Caddy.  `server --health` probes /count.
 //
 // RAM: a few threads on blocking I/O, files streamed from and to disk (uploads are hashed while they are
-// written, never held in memory), the page and the tracts compiled into the binary.
+// written, never held in memory), the pages and the card compiled into the binary.
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::fs::{self, File};
@@ -22,7 +23,8 @@ use std::time::{Duration, Instant};
 use tiny_http::{Header, Method, Request, Response, Server, StatusCode};
 
 const PAGE: &str = include_str!("../page.html");
-const TRACTS: &[u8] = include_bytes!("../tracts.pdf");
+const TRACTS: &str = include_str!("../tracts.html");
+const CARD: &str = include_str!("../card.svg");
 const BTN_ON: &str = r#"<a class="b android" href="/download"><svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M17.6 9.48l1.84-3.18a.38.38 0 0 0-.66-.38l-1.86 3.22a11.5 11.5 0 0 0-9.84 0L5.22 5.92a.38.38 0 0 0-.66.38L6.4 9.48A10.8 10.8 0 0 0 1 18h22a10.8 10.8 0 0 0-5.4-8.52zM7 15.25a1.25 1.25 0 1 1 0-2.5 1.25 1.25 0 0 1 0 2.5zm10 0a1.25 1.25 0 1 1 0-2.5 1.25 1.25 0 0 1 0 2.5z"/></svg> TÉLÉCHARGER POUR ANDROID</a"#;
 const BTN_OFF: &str = r#"<div class="b off" aria-disabled="true"><svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M17.6 9.48l1.84-3.18a.38.38 0 0 0-.66-.38l-1.86 3.22a11.5 11.5 0 0 0-9.84 0L5.22 5.92a.38.38 0 0 0-.66.38L6.4 9.48A10.8 10.8 0 0 0 1 18h22a10.8 10.8 0 0 0-5.4-8.52zM7 15.25a1.25 1.25 0 1 1 0-2.5 1.25 1.25 0 0 1 0 2.5zm10 0a1.25 1.25 0 1 1 0-2.5 1.25 1.25 0 0 1 0 2.5z"/></svg> ANDROID <small>bientôt</small></div"#;
 const HOUR: Duration = Duration::from_secs(3600);
@@ -152,10 +154,8 @@ impl App {
                 ("content-disposition", "attachment; filename=\"Brancard.apk\""),
             ])
             .unwrap_or_else(|| json(404, serde_json::json!({ "error": "no apk yet" }))),
-            (Method::Get, "/tracts.pdf") => respond(200, TRACTS, &[
-                ("content-type", "application/pdf"),
-                ("content-disposition", "inline; filename=\"brancard-tracts-a4.pdf\""),
-            ]),
+            (Method::Get, "/tracts") => respond(200, tracts(), &[("content-type", "text/html; charset=utf-8")]),
+            (Method::Get, "/tracts.pdf") => respond(301, Vec::new(), &[("location", "/tracts")]), // links shared before
             (Method::Get, "/count") => json(200, serde_json::json!({ "count": *self.count.lock().unwrap() })),
             (Method::Post, "/install") => {
                 let ip = self
@@ -254,6 +254,19 @@ impl App {
         }
         json(200, serde_json::json!({ "ok": true, "id": man["id"] }))
     }
+}
+
+/// The tracts page with the card inlined (its <svg> root becomes a <symbol>), built once.
+fn tracts() -> &'static str {
+    static PAGE: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    PAGE.get_or_init(|| {
+        let root = CARD.find("<svg").expect("card svg");
+        let open_end = root + CARD[root..].find('>').expect("svg tag") + 1;
+        let close = CARD.rfind("</svg>").expect("svg end");
+        let tag = &CARD[root..open_end];
+        let viewbox = tag.split("viewBox=\"").nth(1).and_then(|s| s.split('"').next()).expect("viewBox");
+        TRACTS.replace("{{CARD_VIEWBOX}}", viewbox).replace("{{CARD}}", &CARD[open_end..close])
+    })
 }
 
 fn health(port: &str) -> bool {

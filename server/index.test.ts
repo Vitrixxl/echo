@@ -55,13 +55,16 @@ test('publishes a signed update and serves it to the matching runtime only', asy
   s.stop();
 });
 
-test('serves the printable tracts', async () => {
+test('serves the tracts page: one card, the browser builds and prints the sheet', async () => {
   const { s, url } = await boot();
-  const res = await fetch(url + '/tracts.pdf');
+  const res = await fetch(url + '/tracts');
   expect(res.status).toBe(200);
-  expect(res.headers.get('content-type')).toBe('application/pdf');
-  expect(new TextDecoder().decode((await res.arrayBuffer()).slice(0, 5))).toBe('%PDF-');
-  expect(await (await fetch(url + '/')).text()).toContain('href="/tracts.pdf"');
+  const html = await res.text();
+  expect(html).toContain('<symbol id="card" viewBox="0 0 136.06 136.06">');
+  expect(html).not.toContain('{{');
+  expect(html).toContain('size:A4');
+  expect((await fetch(url + '/tracts.pdf', { redirect: 'manual' })).headers.get('location')).toBe('/tracts');
+  expect(await (await fetch(url + '/')).text()).toContain('href="/tracts"');
   s.stop();
 });
 

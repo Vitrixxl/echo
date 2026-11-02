@@ -3,9 +3,9 @@ FROM rust:1-alpine AS build
 WORKDIR /src
 # Dependencies first, in their own layer, so code changes don't recompile them on the Pi.
 COPY Cargo.toml Cargo.lock ./
-RUN mkdir src && echo 'fn main() {}' > src/main.rs && touch page.html tracts.pdf && cargo build --release && rm -rf src
+RUN mkdir src && echo 'fn main() {}' > src/main.rs && touch page.html tracts.html card.svg && cargo build --release && rm -rf src
 COPY src src
-COPY page.html tracts.pdf ./
+COPY page.html tracts.html card.svg ./
 RUN touch src/main.rs && cargo build --release
 
 FROM scratch

@@ -4,6 +4,7 @@ Every line break is set by hand and every block sized to fit its column: nothing
 
 Usage: python3 -I make_flyer.py OUT.pdf [URL]      the A4 sheet (+ OUT.png preview)
        python3 -I make_flyer.py --qr URL OUT.png  one QR code, plain
+       python3 -I make_flyer.py --card-svg OUT.svg [URL]  one card, for the printable page the browser builds
 Needs bun (auto-installs qrcode for promo/qr.js) and the Inter font.
 """
 import json, os, subprocess, sys
@@ -73,9 +74,17 @@ def qrcode(cr, x, y, s, qr, quiet=1):
     n = qr["size"]
     m = s / (n + 2 * quiet)
     cr.set_source_rgb(*INK)
-    for i, on in enumerate(qr["data"]):
-        if on:
-            cr.rectangle(x + m * (quiet + i % n), y + m * (quiet + i // n), m * 1.02, m * 1.02)
+    d = qr["data"]
+    for r in range(n):  # one rectangle per horizontal run of dark modules: smaller files, no seams
+        c = 0
+        while c < n:
+            if d[r * n + c]:
+                s0 = c
+                while c < n and d[r * n + c]:
+                    c += 1
+                cr.rectangle(x + m * (quiet + s0), y + m * (quiet + r), m * (c - s0), m * 1.02)
+            else:
+                c += 1
     cr.fill()
 
 
@@ -155,6 +164,24 @@ if sys.argv[1] == "--qr":
     cr.paint()
     qrcode(cr, 0, 0, 1200, qrdata(url), quiet=4)
     img.write_to_png(out)
+    sys.exit()
+
+if sys.argv[1] == "--card-svg":
+    # One card as SVG (text outlined, so no font needed): server/tracts.html repeats it on an A4 sheet in the
+    # visitor's browser, which prints it or saves it as PDF. The server sends a few KB instead of a PDF.
+    out = sys.argv[2]
+    SITE = qrdata(sys.argv[3] if len(sys.argv) > 3 else "https://brancard.vitrixxl.fr")
+    svg = cairo.SVGSurface(out, CARD * MM, CARD * MM)
+    cr = cairo.Context(svg)
+    cr.scale(MM, MM)
+    card(cr, 0, 0)
+    svg.finish()
+    # Cairo writes 6 decimals; 2 are a hundredth of a point, far below what a printer resolves.
+    import re
+    s = open(out).read()
+    s = re.sub(r"-?\d+\.\d+", lambda m: f"{float(m.group()):.2f}".rstrip("0").rstrip("."), s)
+    s = re.sub(r"\s*\n\s*", "\n", s)
+    open(out, "w").write(s)
     sys.exit()
 
 OUT = sys.argv[1]
