@@ -404,6 +404,8 @@ function MapScreen({ role, city, onSwitch }: { role: Role; city: City | null; on
   const nav = going && route?.to === going && pos ? route : null;
   const g = useMemo(() => (nav?.exact && pos ? guidance(nav.coords, [pos.lon, pos.lat]) : null), [nav, pos]);
   const goingTo = sos.find((r) => r.id === going);
+  const leftM = !nav || !pos ? 0 : g?.leftM ?? (goingTo ? distanceM(pos.lat, pos.lon, goingTo.lat, goingTo.lon) : nav.m);
+  const arrived = !!nav && leftM < ARRIVED_M;
   const topH = nav ? 186 : 64; // banners sit under the top bar, or under the direction block
   const { height: screenH } = useWindowDimensions();
 
@@ -415,10 +417,22 @@ function MapScreen({ role, city, onSwitch }: { role: Role; city: City | null; on
   const featured = sel ?? (role === 'medic' ? sos.find((r) => r.id === going) ?? nearest : myAlert) ?? null;
   const featuredLabel = sel ? "Besoin d'un medic" : role === 'medic' ? (featured?.id === going ? 'Tu y vas' : 'Urgence la plus proche') : 'Ton alerte';
 
-  const focus = useCallback((r: MeshRecord) => {
-    setSelected(r.id);
-    cam.current?.flyTo({ center: [r.lon, r.lat], zoom: 17.5, duration: 600, padding: NO_PAD });
-  }, []);
+  // Markers are memoized, so they get a stable callback that reads the latest state through a ref.
+  const onSos = useRef((_: MeshRecord) => {});
+  onSos.current = (r) => {
+    if (!going || r.id === going) {
+      setSelected(r.id);
+      cam.current?.flyTo({ center: [r.lon, r.lat], zoom: 17.5, duration: 600, padding: going ? navPad : NO_PAD });
+      return;
+    }
+    const c = coverage(r, medics);
+    setDialog({
+      icon: 'navigate', tone: C.orange, title: 'Aller à cette urgence ?',
+      body: [r.note, describe(r, pos), `${c.onSite} sur place · ${c.enRoute} en route`].filter(Boolean).join('\n'),
+      actions: [{ label: 'Non, je continue' }, { label: 'Y aller', color: C.orange, onPress: () => { setGoing(r.id); computeRoute(r, true); } }],
+    });
+  };
+  const focus = useCallback((r: MeshRecord) => onSos.current(r), []);
 
   // ---- Offline router: frame both points, let the tiles render, read their streets, A* ----
   const rendered = useRef<(() => void) | null>(null);
@@ -527,9 +541,8 @@ function MapScreen({ role, city, onSwitch }: { role: Role; city: City | null; on
       {/* Heading to an SOS: big direction block instead of the status bar */}
       {nav && (() => {
         const off = g && g.offM > OFF_ROUTE_M;
-        const here = g ? g.leftM < ARRIVED_M : goingTo && distanceM(pos!.lat, pos!.lon, goingTo.lat, goingTo.lon) < ARRIVED_M;
+        const here = arrived;
         const turn: Turn = here ? 'arrive' : g?.turn ?? 'arrive';
-        const leftM = g?.leftM ?? (goingTo ? distanceM(pos!.lat, pos!.lon, goingTo.lat, goingTo.lon) : nav.m);
         return (
           <View style={[s.nav, { top: insets.top + 8 }]}>
             <View style={s.navIcon}>
@@ -590,8 +603,39 @@ function MapScreen({ role, city, onSwitch }: { role: Role; city: City | null; on
         </Pressable>
       )}
 
+      {/* Heading to an SOS: who is there, who is on the way, cancel. Nothing else. */}
+      {nav && goingTo && (() => {
+        const c = coverage(goingTo, medics.filter((m) => m.id !== mesh.me));
+        return (
+          <View style={[s.bottom, { paddingBottom: insets.bottom + 16 }]} pointerEvents="box-none">
+            <Pressable style={({ pressed }) => [s.round, { alignSelf: 'flex-end', marginBottom: 12 }, pressed && s.pressed]} accessibilityLabel="Me recentrer" onPress={locate}>
+              <Ionicons name="locate" size={20} color={C.text} />
+            </Pressable>
+            <View style={[s.card, { marginBottom: 12 }]}>
+              {!!goingTo.note && <Text style={[s.cardNote, { marginTop: 0, marginBottom: 12 }]} numberOfLines={2}>{goingTo.note}</Text>}
+              <View style={s.row}>
+                <View style={s.navStat}>
+                  <Ionicons name="medkit" size={24} color={C.green} />
+                  <View><Text style={s.navStatN}>{c.onSite}</Text><Text style={s.navStatL}>sur place</Text></View>
+                </View>
+                <View style={s.navStat}>
+                  <Ionicons name="walk" size={24} color={C.orange} />
+                  <View><Text style={s.navStatN}>{c.enRoute}</Text><Text style={s.navStatL}>en route, sans toi</Text></View>
+                </View>
+              </View>
+              {arrived && <View style={[s.row, { marginTop: 12 }]}><Btn label="Résolu" color={C.green} onPress={() => resolve(goingTo.id)} /></View>}
+            </View>
+            <Pressable onPress={() => { setGoing(null); setRoute(null); }} style={({ pressed }) => [s.sos, { backgroundColor: C.line }, pressed && s.pressed]}
+              accessibilityRole="button">
+              <Ionicons name="close" size={28} color="#fff" />
+              <Text style={s.sosText}>ANNULER LE TRAJET</Text>
+            </Pressable>
+          </View>
+        );
+      })()}
+
       {/* Bottom: featured alert card + SOS button (always reachable) */}
-      <View style={[s.bottom, { paddingBottom: insets.bottom + 16 }]} pointerEvents="box-none">
+      {!nav && <View style={[s.bottom, { paddingBottom: insets.bottom + 16 }]} pointerEvents="box-none">
         <View style={[s.row, { marginBottom: 12 }]} pointerEvents="box-none">
         {Manif && (
           <Pressable style={({ pressed }) => [s.pill, manif && { backgroundColor: C.red }, pressed && s.pressed]}
@@ -660,7 +704,7 @@ function MapScreen({ role, city, onSwitch }: { role: Role; city: City | null; on
           <Ionicons name="medical" size={28} color="#fff" />
           <Text style={s.sosText}>APPELER UN MEDIC</Text>
         </Pressable>
-      </View>
+      </View>}
 
       {/* Confirmation sheet: the confirm button sits exactly where the SOS button was, and the
           sheet fades in place (no slide), so a fast double tap confirms instead of closing. */}
@@ -816,6 +860,9 @@ const s = StyleSheet.create({
   navBig: { color: '#fff', fontSize: 44, fontWeight: '900' },
   navText: { color: '#fff', fontSize: 21, fontWeight: '800', marginTop: 2 },
   navMeta: { color: '#ffffffD9', fontSize: 15, marginTop: 6 },
+  navStat: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 12, backgroundColor: C.bg, borderRadius: 14, padding: 14 },
+  navStatN: { color: C.text, fontSize: 26, fontWeight: '900' },
+  navStatL: { color: C.muted, fontSize: 13, fontWeight: '600' },
   dialogIcon: { width: 64, height: 64, borderRadius: 20, backgroundColor: C.red, alignItems: 'center', justifyContent: 'center', marginRight: 4 },
   dialogBody: { color: C.muted, fontSize: 15, lineHeight: 21, marginTop: 8 },
   bar: { height: 10, borderRadius: 5, backgroundColor: C.line, marginTop: 14, overflow: 'hidden' },
