@@ -175,8 +175,10 @@ function DialogModal({ dialog, onClose }: { dialog: Dialog | null; onClose: () =
       <View style={s.dialogWrap}>
         <Pressable style={StyleSheet.absoluteFill} onPress={onClose} />
         <View style={s.dialog}>
-          {dialog.icon && <View style={s.dialogIcon}><Ionicons name={dialog.icon} size={44} color="#fff" /></View>}
-          <Text style={s.sheetTitle}>{dialog.title}</Text>
+          <View style={s.row}>
+            {dialog.icon && <View style={s.dialogIcon}><Ionicons name={dialog.icon} size={36} color="#fff" /></View>}
+            <Text style={[s.sheetTitle, { flex: 1 }]}>{dialog.title}</Text>
+          </View>
           {!!dialog.body && <Text style={s.dialogBody}>{dialog.body}</Text>}
           <View style={[s.row, { marginTop: 22 }]}>
             {dialog.actions.map((a) => (
@@ -738,7 +740,7 @@ const s = StyleSheet.create({
 
   dialogWrap: { flex: 1, justifyContent: 'center', padding: 24 },
   dialog: { backgroundColor: C.card, borderRadius: 24, padding: 18, ...shadow },
-  dialogIcon: { width: 80, height: 80, borderRadius: 24, backgroundColor: C.red, alignItems: 'center', justifyContent: 'center', marginBottom: 18 },
+  dialogIcon: { width: 64, height: 64, borderRadius: 20, backgroundColor: C.red, alignItems: 'center', justifyContent: 'center', marginRight: 4 },
   dialogBody: { color: C.muted, fontSize: 15, lineHeight: 21, marginTop: 8 },
   bar: { height: 10, borderRadius: 5, backgroundColor: C.line, marginTop: 14, overflow: 'hidden' },
   barFill: { height: 10, borderRadius: 5, backgroundColor: C.red },
