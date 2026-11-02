@@ -51,4 +51,3 @@ modules/*/android/build/
 __pycache__/
 # the update-signing CERTIFICATE is public and must ship with the app (the private key stays in ~/.config/echo)
 !certs/certificate.pem
-*.apk
