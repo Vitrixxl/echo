@@ -12,11 +12,13 @@
  * fingerprint of the native code) matches theirs. When native code changed, ship a new APK with --apk.
  *
  * DEPLOY_TOKEN authorises the uploads; when unset it is read over SSH from the server's .env.
+ * The APK is signed with ~/.config/echo/keys/android/release.jks (password in release.pass next to it).
+ * Back that key up: losing it means installed phones can never take a new APK again.
  * Env overrides: ECHO_PI (ssh target), ECHO_APP (pihost name), EXPO_PUBLIC_STATS_URL (public origin, from .env).
  */
 import { spawnSync } from 'node:child_process';
 import { createHash, randomUUID, sign, verify, X509Certificate } from 'node:crypto';
-import { existsSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, rmSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, extname, join, resolve } from 'node:path';
 
@@ -92,9 +94,18 @@ console.log(`Update published for runtime ${runtime.slice(0, 12)} (${files.lengt
 if (apk) {
   const android = join(root, 'android');
   run('bunx', ['expo', 'prebuild', '--platform', 'android', '--no-install'], { env: { ...process.env, CI: '1' } });
-  const env = { ...process.env, JAVA_HOME: process.env.JAVA_HOME ?? join(homedir(), '.local/share/jdk17'), ANDROID_HOME: process.env.ANDROID_HOME ?? join(homedir(), 'Android/Sdk') };
+  const JAVA_HOME = process.env.JAVA_HOME ?? join(homedir(), '.local/share/jdk17');
+  const env = { ...process.env, JAVA_HOME, PATH: `${JAVA_HOME}/bin:${process.env.PATH}`, ANDROID_HOME: process.env.ANDROID_HOME ?? join(homedir(), 'Android/Sdk') };
   run('./gradlew', ['assembleRelease', '-PreactNativeArchitectures=arm64-v8a', '-q', ...(light ? ['--no-daemon', '--max-workers=1', '-Dorg.gradle.jvmargs=-Xmx1g -XX:MaxMetaspaceSize=384m', '-Pkotlin.compiler.execution.strategy=in-process'] : [])], { cwd: android, env });
   spawnSync('./gradlew', ['--stop'], { cwd: android }); // the daemon keeps gigabytes of RAM otherwise
-  await put('/apk', readFileSync(join(android, 'app/build/outputs/apk/release/app-release.apk')), 'application/vnd.android.package-archive');
+  // Gradle signs with the public React Native debug key; anyone could sign a fake "update" with it.
+  // Re-sign with our own key (kept off the repo) so Android refuses any APK not signed by us.
+  const ks = process.env.ECHO_ANDROID_KEYSTORE ?? join(homedir(), '.config/echo/keys/android/release.jks');
+  const signed = join(android, 'app/build/outputs/apk/release/echo-signed.apk');
+  const apksigner = join(env.ANDROID_HOME!, 'build-tools', readdirSync(join(env.ANDROID_HOME!, 'build-tools')).sort().pop()!, 'apksigner');
+  const pass = `file:${ks.replace(/\.jks$/, '.pass')}`;
+  run(apksigner, ['sign', '--ks', ks, '--ks-pass', pass, '--key-pass', pass, '--out', signed, join(android, 'app/build/outputs/apk/release/app-release.apk')], { env });
+  run(apksigner, ['verify', signed], { env });
+  await put('/apk', readFileSync(signed), 'application/vnd.android.package-archive');
   console.log(`APK published: ${ORIGIN}/download`);
 }
