@@ -25,7 +25,7 @@ import { basename, extname, join, resolve } from 'node:path';
 const root = resolve(import.meta.dir, '..');
 const PI = process.env.ECHO_PI ?? 'vitrix@82.67.236.74';
 const APP = process.env.ECHO_APP ?? 'echo';
-const ORIGIN = (process.env.EXPO_PUBLIC_STATS_URL ?? 'https://echo.vitrixxl.fr').replace(/\/$/, '');
+const ORIGIN = (process.env.EXPO_PUBLIC_STATS_URL ?? 'https://brancard.vitrixxl.fr').replace(/\/$/, '');
 const KEY = process.env.ECHO_UPDATES_SIGNING_KEY ?? join(homedir(), '.config/echo/keys/expo-updates/private-key.pem');
 const apk = process.argv.includes('--apk');
 const updateOnly = process.argv.includes('--update-only');

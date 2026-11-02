@@ -1,0 +1,17 @@
+[package]
+name = "brancard-server"
+version = "1.0.0"
+edition = "2021"
+
+[dependencies]
+tiny_http = "0.12"
+sha2 = "0.10"
+serde_json = "1"
+
+# Small, lean binary: the Pi runs it in a `scratch` image next to other apps.
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true

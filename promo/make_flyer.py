@@ -158,7 +158,7 @@ if sys.argv[1] == "--qr":
     sys.exit()
 
 OUT = sys.argv[1]
-SITE = qrdata(sys.argv[2] if len(sys.argv) > 2 else "https://echo.vitrixxl.fr")
+SITE = qrdata(sys.argv[2] if len(sys.argv) > 2 else "https://brancard.vitrixxl.fr")
 pdf = cairo.PDFSurface(OUT, W * MM, H * MM)
 page(pdf)
 pdf.finish()

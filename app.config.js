@@ -4,7 +4,7 @@
 // matching certs/certificate.pem (scripts/deploy.ts); anything else is refused by the phone.
 // The runtime version is a fingerprint of the native code: an update only reaches APKs it can run on.
 module.exports = ({ config }) => {
-  const origin = process.env.EXPO_PUBLIC_STATS_URL ?? 'https://echo.vitrixxl.fr';
+  const origin = process.env.EXPO_PUBLIC_STATS_URL ?? 'https://brancard.vitrixxl.fr';
   const plugins = [...config.plugins];
   // Plain HTTP only for a local test server; production is https and keeps Android's cleartext block.
   if (origin.startsWith('http://')) plugins.push(['expo-build-properties', { android: { usesCleartextTraffic: true } }]);
