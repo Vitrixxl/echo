@@ -7,13 +7,13 @@ import * as Location from 'expo-location';
 import * as Notifications from 'expo-notifications';
 import { StatusBar } from 'expo-status-bar';
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { ActivityIndicator, AppState, Image, BackHandler, Keyboard, KeyboardAvoidingView, Linking, Pressable, ScrollView, StyleSheet, Text, TextInput, useWindowDimensions, Vibration, View } from 'react-native';
+import { ActivityIndicator, AppState, Image, BackHandler, Keyboard, KeyboardAvoidingView, Linking, Pressable, Platform, ScrollView, StyleSheet, Text, TextInput, useWindowDimensions, Vibration, View } from 'react-native';
 import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
 import Manif from './modules/manif';
 import { coverage, distanceM, type Alert as MeshRecord } from './src/alerts';
 import { ensurePermissions, useMesh } from './src/mesh';
 import { MAP_STYLE } from './src/mapStyle';
-import { center, downloadCity, installCount, loadCity, saveCity, searchCities, type City } from './src/onboarding';
+import { center, downloadCity, installCount, loadCity, ORIGIN, saveCity, searchCities, type City } from './src/onboarding';
 import { buildGraph, guidance, lengthM, shortestPath, type LngLat, type Turn } from './src/route';
 
 // Walkable road layers of that style; the router reads their geometry from tiles on the phone.
@@ -44,6 +44,10 @@ const FILL: Record<string, string> = { [C.red]: '#D93A40', [C.green]: '#24804F',
 const fill = (c: string) => FILL[c] ?? c;
 const ink = (c: string) => (c === C.orange ? '#111' : '#fff');
 const TAGS = ['Blessure', 'Saignement', 'Gaz lacrymo', 'Malaise', 'Inconscient', 'Brûlure'];
+// App Store rule 1.2: text written by strangers needs reporting and blocking, impossible without accounts or a
+// server. So on iPhone there is no free text: only the preset tags are typed, and shown from other phones.
+const FREE_TEXT = Platform.OS !== 'ios';
+const shownNote = (note: string) => (FREE_TEXT ? note : note.split(' · ').filter((x) => TAGS.includes(x)).join(' · '));
 
 type Role = 'medic' | 'civil';
 type Pos = { lat: number; lon: number };
@@ -220,6 +224,9 @@ function RoleScreen({ onPick }: { onPick: (r: Role) => void }) {
         body="Formation aux premiers secours requise. Ta position est visible par tout le monde." onPress={() => onPick('medic')} />
       <RoleCard icon="person" color={C.blue} title="Je ne suis pas medic"
         body="Tu peux appeler un medic. Ta position n'est partagée que si tu lances une alerte." onPress={() => onPick('civil')} />
+      <Pressable onPress={() => Linking.openURL(ORIGIN + '/confidentialite')} hitSlop={12} style={{ alignSelf: 'center', marginTop: 16 }}>
+        <Text style={s.link}>Confidentialité</Text>
+      </Pressable>
     </View>
   );
 }
@@ -362,7 +369,7 @@ function MapScreen({ role, city, onSwitch }: { role: Role; city: City | null; on
     const a = mesh.incoming;
     if (!a || role !== 'medic') return;
     Vibration.vibrate([0, 500, 200, 500, 200, 500]);
-    const body = [a.note, describe(a, posRef.current)].filter(Boolean).join(' · ');
+    const body = [shownNote(a.note), describe(a, posRef.current)].filter(Boolean).join(' · ');
     if (AppState.currentState === 'active') return;
     if (manifRef.current && Manif) Manif.wake("🚨 Besoin d'un medic", body); // lights the screen, over the lock screen
     else Notifications.scheduleNotificationAsync({
@@ -433,7 +440,7 @@ function MapScreen({ role, city, onSwitch }: { role: Role; city: City | null; on
     const c = coverage(r, medics);
     setDialog({
       icon: 'navigate', tone: C.orange, title: 'Aller à cette urgence ?',
-      body: [r.note, describe(r, pos), `${c.onSite} sur place · ${c.enRoute} en route`].filter(Boolean).join('\n'),
+      body: [shownNote(r.note), describe(r, pos), `${c.onSite} sur place · ${c.enRoute} en route`].filter(Boolean).join('\n'),
       actions: [{ label: 'Non, je continue' }, { label: 'Y aller', color: C.orange, onPress: () => { setGoing(r.id); computeRoute(r, true); } }],
     });
   };
@@ -621,7 +628,7 @@ function MapScreen({ role, city, onSwitch }: { role: Role; city: City | null; on
               <Ionicons name="locate" size={20} color={C.text} />
             </Pressable>
             <View style={s.navPanel}>
-              {!!goingTo.note && <Text style={s.navNote} numberOfLines={1}>{goingTo.note}</Text>}
+              {!!shownNote(goingTo.note) && <Text style={s.navNote} numberOfLines={1}>{shownNote(goingTo.note)}</Text>}
               <View style={[s.row, { flexWrap: 'wrap' }]}>
                 <View style={s.stat}><Ionicons name="medkit" size={14} color={C.green} /><Text style={s.statText}>{c.onSite} sur place</Text></View>
                 <View style={s.stat}><Ionicons name="walk" size={14} color={C.orange} /><Text style={s.statText}>{c.enRoute} en route, sans toi</Text></View>
@@ -669,7 +676,7 @@ function MapScreen({ role, city, onSwitch }: { role: Role; city: City | null; on
                   </Pressable>
                 )}
               </View>
-              {!!featured.note && <Text style={s.cardNote}>{featured.note}</Text>}
+              {!!shownNote(featured.note) && <Text style={s.cardNote}>{shownNote(featured.note)}</Text>}
               <Text style={s.cardMeta}>{describe(featured, pos)}</Text>
               <View style={[s.row, { marginTop: 10, flexWrap: 'wrap' }]}>
                 <View style={s.stat}><Ionicons name="walk" size={14} color={C.orange} /><Text style={s.statText}>{c.enRoute} en route</Text></View>
@@ -735,8 +742,8 @@ function MapScreen({ role, city, onSwitch }: { role: Role; city: City | null; on
               );
             })}
           </View>
-          <TextInput value={note} onChangeText={setNote} maxLength={120} placeholder="Autre détail…"
-            placeholderTextColor={C.muted} style={s.input} />
+          {FREE_TEXT && <TextInput value={note} onChangeText={setNote} maxLength={120} placeholder="Autre détail…"
+            placeholderTextColor={C.muted} style={s.input} />}
           <Pressable onPress={confirm} disabled={!target}
             style={({ pressed }) => [s.sos, { marginTop: 24 }, !target && { opacity: 0.4 }, pressed && s.pressed]}
             accessibilityRole="button" accessibilityLabel="Confirmer l'alerte">
@@ -855,6 +862,7 @@ const s = StyleSheet.create({
   tagOn: { backgroundColor: fill(C.red), borderColor: fill(C.red) },
   tagText: { color: C.text, fontWeight: '600' },
   input: { marginTop: 12, height: 50, borderRadius: 14, backgroundColor: C.bg, color: C.text, paddingHorizontal: 14, fontSize: 15, borderWidth: 1, borderColor: C.line },
+  link: { color: C.muted, fontSize: 14, fontWeight: '600', textDecorationLine: 'underline' },
   cancelText: { color: C.muted, fontWeight: '700', fontSize: 16 },
 
   dialogWrap: { flex: 1, justifyContent: 'center', padding: 24 },

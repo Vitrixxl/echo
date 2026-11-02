@@ -3,6 +3,7 @@
 //   GET  /download                 latest APK
 //   GET  /tracts                   A4 sheet of cards to print, cut and hand around: the browser builds it from one
 //                                  card (card.svg, from promo/make_flyer.py --card-svg) and prints it or saves a PDF
+//   GET  /confidentialite          privacy policy (linked from the app and the App Store listing)
 //   GET  /count, POST /install     install counter (one install per IP per hour, IPs only kept in memory)
 //   GET  /updates/manifest         expo-updates protocol 1: the signed manifest for the phone's runtime, or 204
 //   GET  /updates/assets/:sha256   update files
@@ -24,6 +25,7 @@ use tiny_http::{Header, Method, Request, Response, Server, StatusCode};
 
 const PAGE: &str = include_str!("../page.html");
 const TRACTS: &str = include_str!("../tracts.html");
+const PRIVACY: &str = include_str!("../privacy.html");
 const CARD: &str = include_str!("../card.svg");
 const BTN_ON: &str = r#"<a class="b android" href="/download"><svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M17.6 9.48l1.84-3.18a.38.38 0 0 0-.66-.38l-1.86 3.22a11.5 11.5 0 0 0-9.84 0L5.22 5.92a.38.38 0 0 0-.66.38L6.4 9.48A10.8 10.8 0 0 0 1 18h22a10.8 10.8 0 0 0-5.4-8.52zM7 15.25a1.25 1.25 0 1 1 0-2.5 1.25 1.25 0 0 1 0 2.5zm10 0a1.25 1.25 0 1 1 0-2.5 1.25 1.25 0 0 1 0 2.5z"/></svg> TÉLÉCHARGER POUR ANDROID</a"#;
 const BTN_OFF: &str = r#"<div class="b off" aria-disabled="true"><svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M17.6 9.48l1.84-3.18a.38.38 0 0 0-.66-.38l-1.86 3.22a11.5 11.5 0 0 0-9.84 0L5.22 5.92a.38.38 0 0 0-.66.38L6.4 9.48A10.8 10.8 0 0 0 1 18h22a10.8 10.8 0 0 0-5.4-8.52zM7 15.25a1.25 1.25 0 1 1 0-2.5 1.25 1.25 0 0 1 0 2.5zm10 0a1.25 1.25 0 1 1 0-2.5 1.25 1.25 0 0 1 0 2.5z"/></svg> ANDROID <small>bientôt</small></div"#;
@@ -154,6 +156,7 @@ impl App {
                 ("content-disposition", "attachment; filename=\"Brancard.apk\""),
             ])
             .unwrap_or_else(|| json(404, serde_json::json!({ "error": "no apk yet" }))),
+            (Method::Get, "/confidentialite") => respond(200, PRIVACY, &[("content-type", "text/html; charset=utf-8")]),
             (Method::Get, "/tracts") => respond(200, tracts(), &[("content-type", "text/html; charset=utf-8")]),
             (Method::Get, "/tracts.pdf") => respond(301, Vec::new(), &[("location", "/tracts")]), // links shared before
             (Method::Get, "/count") => json(200, serde_json::json!({ "count": *self.count.lock().unwrap() })),
@@ -182,7 +185,7 @@ impl App {
                 let runtime = get_header(&req, "expo-runtime-version").unwrap_or("").to_string();
                 let platform = get_header(&req, "expo-platform").unwrap_or("android");
                 let base = [("expo-protocol-version", "1"), ("expo-sfv-version", "0"), ("cache-control", "private, max-age=0")];
-                let stored = (platform == "android" && is_runtime(&runtime))
+                let stored = ((platform == "android" || platform == "ios") && is_runtime(&runtime))
                     .then(|| fs::read_to_string(self.data.join("updates").join(format!("{runtime}.json"))).ok())
                     .flatten()
                     .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok());

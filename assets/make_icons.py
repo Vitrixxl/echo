@@ -51,7 +51,8 @@ def mark(cr, cx, cy, u, ink=WHITE, cut=RED):
 
 
 def png(name, size, bg=None, u=0.0, radius=0.0, cut=RED):
-    surf = cairo.ImageSurface(cairo.FORMAT_ARGB32, size, size)
+    # A full square tile has no transparency: save it without alpha (the App Store refuses icons with one).
+    surf = cairo.ImageSurface(cairo.FORMAT_RGB24 if bg and not radius else cairo.FORMAT_ARGB32, size, size)
     cr = cairo.Context(surf)
     if bg:
         cr.set_source_rgb(*bg)

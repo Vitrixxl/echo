@@ -66,6 +66,9 @@ test('serves the tracts page: one card, the browser builds and prints the sheet'
   expect(html).toContain('TÉLÉCHARGER LE PDF'); // made in the browser by tractsPdf()
   expect((await fetch(url + '/tracts.pdf', { redirect: 'manual' })).headers.get('location')).toBe('/tracts');
   expect(await (await fetch(url + '/')).text()).toContain('href="/tracts"');
+  const privacy = await fetch(url + '/confidentialite');
+  expect(privacy.status).toBe(200);
+  expect(await privacy.text()).toContain('Aucune donnée personnelle');
   s.stop();
 });
 

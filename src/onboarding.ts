@@ -5,7 +5,9 @@ import { OfflineManager } from '@maplibre/maplibre-react-native';
 // OpenFreeMap Positron: OSM vector tiles, free, no key, allowed to cache for offline use. The app draws it
 // with its own colours (mapStyle.ts); this URL is what the offline pack downloads.
 export const STYLE = 'https://tiles.openfreemap.org/styles/positron';
-const STATS_URL = process.env.EXPO_PUBLIC_STATS_URL; // install counter (server/), optional
+// Our server (server/): install counter, privacy page. Same default as app.config.js; override with the env var.
+export const ORIGIN = (process.env.EXPO_PUBLIC_STATS_URL ?? 'https://brancard.vitrixxl.fr').replace(/\/$/, '');
+const STATS_URL = ORIGIN;
 const CITY_KEY = 'echo.city.v1';
 const INSTALLED_KEY = 'echo.installed.v1';
 const MAX_DEG = 0.6; // big results (regions...) are capped to ~60 km so a pack stays a few thousand tiles
