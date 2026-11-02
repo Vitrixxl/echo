@@ -104,7 +104,7 @@ if (apk) {
   const signed = join(android, 'app/build/outputs/apk/release/echo-signed.apk');
   const apksigner = join(env.ANDROID_HOME!, 'build-tools', readdirSync(join(env.ANDROID_HOME!, 'build-tools')).sort().pop()!, 'apksigner');
   const pass = `file:${ks.replace(/\.jks$/, '.pass')}`;
-  run(apksigner, ['sign', '--ks', ks, '--ks-pass', pass, '--key-pass', pass, '--out', signed, join(android, 'app/build/outputs/apk/release/app-release.apk')], { env });
+  run(apksigner, ['sign', '--ks', ks, '--ks-pass', pass, '--out', signed, join(android, 'app/build/outputs/apk/release/app-release.apk')], { env });
   run(apksigner, ['verify', signed], { env });
   await put('/apk', readFileSync(signed), 'application/vnd.android.package-archive');
   console.log(`APK published: ${ORIGIN}/download`);
