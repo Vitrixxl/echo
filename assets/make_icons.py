@@ -1,12 +1,13 @@
-"""Brancard app icons: someone lying on a stretcher, white on red. No red cross (protected emblem).
-Run: python3 -I assets/make_icons.py assets/
-stretcher() is the one drawing of the mark; promo/make_flyer.py and promo/make_video.py import it."""
+"""Brancard app icons: a big medical plus in a white disc above someone lying on a stretcher,
+white on red. Run: python3 -I assets/make_icons.py assets/
+mark() is the one drawing of the logo; promo/make_flyer.py and promo/make_video.py import it."""
 import math
 import sys
 
 import cairo
 
 RED = (0.898, 0.282, 0.302)
+WHITE = (1, 1, 1)
 
 
 def rrect(cr, x, y, w, h, r):
@@ -16,51 +17,60 @@ def rrect(cr, x, y, w, h, r):
     cr.close_path()
 
 
-def stretcher(cr, cx, cy, s, color=(1, 1, 1)):
-    """Centered mark, s = overall width: a medical plus above someone lying on a stretcher.
-    The plus is white with rounded ends on the red tile, never red on white (Red Cross emblem)."""
-    cr.set_source_rgb(*color)
-    cy += s * 0.08  # balance the plus above against the legs below
-    lw = s * 0.07
-    arm, th = s * 0.13, s * 0.085
-    px, py = cx, cy - s * 0.36
+def plus(cr, px, py, arm, th):
     rrect(cr, px - th / 2, py - arm, th, arm * 2, th / 2)
     rrect(cr, px - arm, py - th / 2, arm * 2, th, th / 2)
-    cr.fill()
-    rrect(cr, cx - s * 0.5, cy + s * 0.08, s, lw, lw / 2)
+
+
+def mark(cr, cx, cy, u, ink=WHITE, cut=RED):
+    """The logo centred on (cx, cy); u = width of the visible icon it sits in. Plus disc on top,
+    stretcher low. The plus is drawn in `cut` (the tile colour), or punched out when cut is None."""
+    S = 0.66 * u
+    lw = 0.07 * S
+    bar = cy + 0.31 * u
+    cr.set_source_rgb(*ink)
+    rrect(cr, cx - S / 2, bar, S, lw, lw / 2)
     for x in (-0.3, 0.3):
-        rrect(cr, cx + s * x - lw / 2, cy + s * 0.08, lw, s * 0.2, lw / 2)
+        rrect(cr, cx + S * x - lw / 2, bar, lw, 0.2 * S, lw / 2)
     cr.fill()
-    cr.arc(cx - s * 0.27, cy - s * 0.05, s * 0.085, 0, 2 * math.pi)
+    cr.arc(cx - 0.27 * S, bar - 0.13 * S, 0.085 * S, 0, 2 * math.pi)
     cr.fill()
-    rrect(cr, cx - s * 0.15, cy - s * 0.13, s * 0.47, s * 0.17, s * 0.085)
+    rrect(cr, cx - 0.15 * S, bar - 0.21 * S, 0.47 * S, 0.17 * S, 0.085 * S)
     cr.fill()
+    px, py = cx, cy - 0.19 * u
+    cr.arc(px, py, 0.21 * u, 0, 2 * math.pi)
+    cr.fill()
+    cr.save()
+    if cut:
+        cr.set_source_rgb(*cut)
+    else:
+        cr.set_operator(cairo.OPERATOR_CLEAR)
+    plus(cr, px, py, 0.15 * u, 0.088 * u)
+    cr.fill()
+    cr.restore()
 
 
-def png(name, size, bg=None, mark=0.0, color=(1, 1, 1), radius=0.0):
+def png(name, size, bg=None, u=0.0, radius=0.0, cut=RED):
     surf = cairo.ImageSurface(cairo.FORMAT_ARGB32, size, size)
     cr = cairo.Context(surf)
     if bg:
         cr.set_source_rgb(*bg)
         if radius:
-            r = size * radius
-            cr.new_sub_path()
-            for (x, y, a) in ((size - r, r, -math.pi / 2), (size - r, size - r, 0), (r, size - r, math.pi / 2), (r, r, math.pi)):
-                cr.arc(x, y, r, a, a + math.pi / 2)
-            cr.close_path()
+            rrect(cr, 0, 0, size, size, size * radius)
             cr.fill()
         else:
             cr.paint()
-    if mark:
-        stretcher(cr, size / 2, size / 2, size * mark, color)
+    if u:
+        mark(cr, size / 2, size / 2, size * u, cut=cut)
     surf.write_to_png(f"{sys.argv[1]}/{name}")
 
 
 if __name__ == "__main__":
-    out = sys.argv[1]
-    png("icon.png", 1024, RED, 0.62)
-    png("splash-icon.png", 1024, RED, 0.62, radius=0.22)  # red tile: never the mark in red on white
-    png("favicon.png", 48, RED, 0.62, radius=0.2)
+    png("icon.png", 1024, RED, 0.86)
+    png("splash-icon.png", 1024, RED, 0.86, radius=0.22)
+    png("favicon.png", 48, RED, 0.86, radius=0.22)
     png("android-icon-background.png", 512, RED)
-    png("android-icon-foreground.png", 512, None, 0.42)  # adaptive icons crop to the inner ~66 %
-    png("android-icon-monochrome.png", 432, None, 0.42)
+    # Adaptive icons show only the inner 2/3 of the layer, sometimes as a circle: keep the mark well inside.
+    png("android-icon-foreground.png", 512, None, 0.6, cut=None)
+    png("android-icon-monochrome.png", 432, None, 0.6, cut=None)
+    png("mark.png", 192, None, 1.0, cut=None)  # the app's welcome screen puts it on a red tile

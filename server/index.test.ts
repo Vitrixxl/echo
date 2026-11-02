@@ -43,3 +43,13 @@ test('publishes a signed update and serves it to the matching runtime only', asy
   expect(await (await fetch(url + '/updates/assets/' + sha)).text()).toBe('console.log(1)');
   s.stop(true);
 });
+
+test('serves the printable tracts', async () => {
+  const { s, url } = boot();
+  const res = await fetch(url + '/tracts.pdf');
+  expect(res.status).toBe(200);
+  expect(res.headers.get('content-type')).toBe('application/pdf');
+  expect(new TextDecoder().decode((await res.arrayBuffer()).slice(0, 5))).toBe('%PDF-');
+  expect(await (await fetch(url + '/')).text()).toContain('href="/tracts.pdf"');
+  s.stop(true);
+});

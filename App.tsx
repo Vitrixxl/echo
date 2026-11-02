@@ -212,7 +212,7 @@ function RoleScreen({ onPick }: { onPick: (r: Role) => void }) {
   const insets = useSafeAreaInsets();
   return (
     <View style={[s.role, { paddingTop: insets.top + 48, paddingBottom: insets.bottom + 24 }]}>
-      <View style={s.logo}><Image source={require('./assets/mark.png')} style={{ width: 42, height: 42 }} /></View>
+      <View style={s.logo}><Image source={require('./assets/mark.png')} style={{ width: 56, height: 56 }} /></View>
       <Text style={s.h1}>Brancard</Text>
       <Text style={s.sub}>Les alertes passent de téléphone en téléphone, même sans réseau. Plus on est nombreux, plus ça porte loin.</Text>
       <View style={{ flex: 1 }} />

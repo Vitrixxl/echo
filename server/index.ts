@@ -1,6 +1,7 @@
 // Brancard server, hosted by pihost (compose.yaml at the repo root). Stores nothing about anyone.
 //   GET  /                         download page (the "link in bio")
 //   GET  /download                 latest APK
+//   GET  /tracts.pdf               A4 sheet of cards to print, cut and hand around (promo/make_flyer.py)
 //   GET  /count, POST /install     install counter (one install per IP per hour, IPs only kept in memory)
 //   GET  /updates/manifest         expo-updates protocol 1: the signed manifest for the phone's runtime, or 204
 //   GET  /updates/assets/:sha256   update files
@@ -62,6 +63,10 @@ export function start(port = 8787, data = './data', token = '', trustProxy = fal
           headers: { 'content-type': 'application/vnd.android.package-archive', 'content-disposition': 'attachment; filename="Brancard.apk"' },
         });
       }
+      if (m === 'GET' && pathname === '/tracts.pdf')
+        return new Response(Bun.file(join(import.meta.dir, 'tracts.pdf')), {
+          headers: { 'content-type': 'application/pdf', 'content-disposition': 'inline; filename="brancard-tracts-a4.pdf"' },
+        });
       if (m === 'GET' && pathname === '/count') return json({ count: count() });
       if (m === 'POST' && pathname === '/install') {
         const ip = (trustProxy && req.headers.get('x-forwarded-for')?.split(',')[0].trim()) || server.requestIP(req)?.address || '?';
@@ -121,10 +126,12 @@ export function start(port = 8787, data = './data', token = '', trustProxy = fal
 
 // The "link in bio": same look as the app (dark, app red, system font), one headline and the button.
 // Android download; iPhone greyed out until the App Store version exists. No third-party requests.
-const LOGO = `<svg width="34" height="34" viewBox="0 0 100 100" aria-hidden="true"><rect width="100" height="100" rx="24" fill="#E5484D"/>
-<g fill="#fff"><rect x="47.37" y="24.58" width="5.27" height="16.12" rx="2.64"/><rect x="41.94" y="30" width="16.12" height="5.27" rx="2.64"/><rect x="19" y="59.92" width="62" height="4.34" rx="2.17"/><rect x="29.23" y="59.92" width="4.34" height="12.4" rx="2.17"/><rect x="66.43" y="59.92" width="4.34" height="12.4" rx="2.17"/><circle cx="33.26" cy="51.86" r="5.27"/><rect x="40.7" y="46.9" width="29.14" height="10.54" rx="5.27"/></g></svg>`; // same drawing as assets/make_icons.py
+const LOGO = `<svg width="34" height="34" viewBox="0 0 100 100" aria-hidden="true"><rect width="100" height="100" rx="22" fill="#E5484D"/>
+<g fill="#fff"><rect x="21.62" y="76.66" width="56.76" height="3.97" rx="1.99"/><rect x="30.99" y="76.66" width="3.97" height="11.35" rx="1.99"/><rect x="65.04" y="76.66" width="3.97" height="11.35" rx="1.99"/><rect x="41.49" y="64.74" width="26.68" height="9.65" rx="4.82"/><circle cx="34.67" cy="69.28" r="4.82"/><circle cx="50" cy="33.66" r="18.06"/></g><g fill="#E5484D"><rect x="46.22" y="20.76" width="7.57" height="25.8" rx="3.78"/><rect x="37.1" y="29.88" width="25.8" height="7.57" rx="3.78"/></g></svg>`; // same drawing as assets/make_icons.py
 const ANDROID = `<svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M17.6 9.48l1.84-3.18a.38.38 0 0 0-.66-.38l-1.86 3.22a11.5 11.5 0 0 0-9.84 0L5.22 5.92a.38.38 0 0 0-.66.38L6.4 9.48A10.8 10.8 0 0 0 1 18h22a10.8 10.8 0 0 0-5.4-8.52zM7 15.25a1.25 1.25 0 1 1 0-2.5 1.25 1.25 0 0 1 0 2.5zm10 0a1.25 1.25 0 1 1 0-2.5 1.25 1.25 0 0 1 0 2.5z"/></svg>`;
 const APPLE = `<svg width="20" height="22" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M16.37 1.43c0 1.14-.42 2.2-1.25 3.03-.9.9-1.98 1.42-3.15 1.33-.15-1.1.4-2.26 1.2-3.08.88-.9 2.15-1.48 3.2-1.28zM20.5 17.2c-.56 1.3-.83 1.87-1.55 3.02-1 1.6-2.42 3.6-4.17 3.6-1.56.02-1.96-1.02-4.08-1-2.12 0-2.56 1.02-4.12 1-1.75-.02-3.1-1.83-4.1-3.42C-.33 15.95-.62 10.6 1.6 7.85c1.06-1.32 2.72-2.1 4.3-2.1 1.6 0 2.6 1.02 3.93 1.02 1.28 0 2.06-1.02 3.92-1.02 1.4 0 2.88.76 3.94 2.08-3.46 1.9-2.9 6.84.81 8.37z"/></svg>`;
+
+const PRINT = `<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linejoin="round" aria-hidden="true"><path d="M6 9V3h12v6M6 18H4a1 1 0 0 1-1-1v-6a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v6a1 1 0 0 1-1 1h-2M6 14h12v7H6z"/></svg>`;
 
 const page = (n: number, hasApk: boolean) => `<!doctype html>
 <html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
@@ -133,6 +140,7 @@ const page = (n: number, hasApk: boolean) => `<!doctype html>
 <meta property="og:title" content="Organisons-nous face à la répression">
 <meta property="og:description" content="Brancard alerte les street medics quand quelqu'un est blessé en manifestation, sans internet.">
 <meta name="theme-color" content="#0F1115">
+<link rel="icon" href="data:image/svg+xml,${encodeURIComponent(LOGO)}">
 <style>
 *{box-sizing:border-box}
 body{margin:0;background:#0F1115;color:#F2F4F7;font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
@@ -146,6 +154,8 @@ h1 span{color:#E5484D}
 .android{background:#E5484D;color:#fff}
 .off{background:#171A21;color:#5E636B}
 .off small{font-weight:700;font-size:13px}
+.tract{background:transparent;color:#F2F4F7;border:2px solid #262A33;margin-top:22px}
+.note{color:#9BA1A6;font-size:15px;text-align:center;margin:0}
 footer{text-align:center;font-size:14px}
 footer a{color:#9BA1A6;text-decoration:none}
 </style></head><body><main>
@@ -157,6 +167,8 @@ ${hasApk
   ? `<a class="b android" href="/download">${ANDROID} TÉLÉCHARGER POUR ANDROID</a>`
   : `<div class="b off" aria-disabled="true">${ANDROID} ANDROID <small>bientôt</small></div>`}
 <div class="b off" aria-disabled="true">${APPLE} IPHONE <small>bientôt</small></div>
+<a class="b tract" href="/tracts.pdf">${PRINT} TRACTS À IMPRIMER</a>
+<p class="note">Imprime, découpe, distribue dans le cortège.</p>
 </div>
 <footer><a href="https://github.com/Vitrixxl/echo">Code source sur GitHub</a></footer>
 </main></body></html>`;

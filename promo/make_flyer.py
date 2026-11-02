@@ -8,7 +8,7 @@ import json, os, subprocess, sys
 import cairo
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "assets"))
-from make_icons import stretcher  # noqa: E402
+from make_icons import mark  # noqa: E402
 
 NAME = "Brancard"
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -40,7 +40,7 @@ def icon(cr, x, y, s):
     cr.set_source_rgb(*RED)
     rrect(cr, x, y, s, s, s * 0.24)
     cr.fill()
-    stretcher(cr, x + s / 2, y + s / 2, s * 0.62)
+    mark(cr, x + s / 2, y + s / 2, s * 0.86)
 
 
 def text(cr, s, x, y, size, bold=True, color=INK, width=None, lead=1.25):

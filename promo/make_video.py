@@ -20,7 +20,7 @@ import wave
 import cairo
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "assets"))
-from make_icons import rrect, stretcher  # noqa: E402  (the app mark, one drawing everywhere)
+from make_icons import mark, rrect  # noqa: E402  (the app mark, one drawing everywhere)
 
 W, H, FPS = 1080, 1920, 30
 PAPER = (0.988, 0.986, 0.978)
@@ -246,7 +246,7 @@ def xmark(cr, s, color=RED, p=1.0):
 
 def echo_mark(cr, s, color=WHITE):
     """The Brancard logo centered on origin, s = width. Same drawing as assets/make_icons.py."""
-    stretcher(cr, 0, 0, s, color)
+    mark(cr, 0, 0, s * 1.3, color, None)
 
 
 def medkit(cr, s=1.0, color=GREEN, cross=WHITE):
