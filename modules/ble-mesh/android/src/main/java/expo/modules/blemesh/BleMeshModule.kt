@@ -16,6 +16,10 @@ import java.util.concurrent.ConcurrentHashMap
 // air spells out what the app is.
 val SERVICE: UUID = UUID.fromString("dcbe3a65-8595-4490-8012-38f541bb1582")
 val CHAR: UUID = UUID.fromString("dcbe3a66-8595-4490-8012-38f541bb1582")
+// Alerts broadcast in the advertising signal itself (no link needed): service data under this UUID.
+val ADV: UUID = UUID.fromString("dcbe3a67-8595-4490-8012-38f541bb1582")
+const val ADV_KEEP_MS = 60_000L // each alert is broadcast for a minute after it changed
+const val ADV_ROTATE_MS = 600L // several alerts take turns in the one advertising set
 const val HEADER = 6 // msgId u16, index u16, total u16
 // Reassembly limits: anyone can write to the GATT server, so partial messages must not pile up in memory.
 const val MAX_PARTS = 1024 // ~180 KB at a 185-byte MTU; real messages are a few KB
@@ -29,11 +33,13 @@ const val MAX_LINKS = 7 // outgoing links; flooding only needs the crowd connect
 const val MIN_RSSI = -90 // weaker advertisers are at the edge of range: their links fail and churn
 const val WRITE_TIMEOUT_MS = 15_000L
 
-/** One chunk to write; the last chunk of a message carries the JS promise, resolved once it is written. */
-class Chunk(val bytes: ByteArray, val done: expo.modules.kotlin.Promise?)
+/** One chunk to write; the last chunk of a message carries the JS promise, resolved once it is written.
+ *  Urgent chunks (alerts) go without write response: no round trip per packet, and losses don't matter
+ *  since every phone of a crowd hears the same alert from several neighbours. */
+class Chunk(val bytes: ByteArray, val done: expo.modules.kotlin.Promise?, val urgent: Boolean = false)
 
 /** One outgoing link: we are GATT client, the peer is GATT server. Writes are serialized. */
-class Link(val gatt: BluetoothGatt) {
+class Link(val gatt: BluetoothGatt, val name: String?) { // name: the peer's random mesh name, from its advertising
   var char: BluetoothGattCharacteristic? = null
   var mtu = 23
   val queue = ArrayDeque<Chunk>()
@@ -62,15 +68,19 @@ class BleMeshModule : Module() {
   override fun definition() = ModuleDefinition {
     Name("BleMesh")
     Events("onPeer", "onPeerLost", "onText")
-    AsyncFunction("start") { start() }
+    // name: this launch's random mesh name (12 hex chars), advertised so a neighbour also linked over Nearby
+    // or Multipeer can recognise us and keep a single link.
+    AsyncFunction("start") { name: String -> start(name) }
     AsyncFunction("stop") { stop() }
     // Resolves once the whole message is written to the peer: the JS outbox sends the next one only then, so
     // it can put alerts first and drop outdated positions instead of piling them up here.
-    AsyncFunction("send") { peerId: String, text: String, promise: expo.modules.kotlin.Promise -> send(peerId, text, promise) }
+    AsyncFunction("send") { peerId: String, text: String, urgent: Boolean, promise: expo.modules.kotlin.Promise -> send(peerId, text, urgent, promise) }
+    // Puts an alert (base64 of a one-record message) in the broadcast rotation for ADV_KEEP_MS.
+    Function("broadcast") { id: String, text: String -> broadcast(id, text) }
     OnDestroy { stop() }
   }
 
-  private fun start() {
+  private fun start(name: String) {
     val adapter = manager.adapter ?: throw Exception("Bluetooth indisponible")
     if (!adapter.isEnabled) throw Exception("Active le Bluetooth")
     if (server == null) {
@@ -90,28 +100,46 @@ class BleMeshModule : Module() {
         .setTxPowerLevel(AdvertiseSettings.ADVERTISE_TX_POWER_HIGH)
         .setConnectable(true).build(),
       AdvertiseData.Builder().addServiceUuid(ParcelUuid(SERVICE)).build(),
+      // Scan response (sent to active scanners): our mesh name, 6 bytes.
+      AdvertiseData.Builder().addServiceData(ParcelUuid(SERVICE), hexBytes(name)).build(),
       advertiseCallback,
     )
+    val scan = ScanSettings.Builder().setScanMode(ScanSettings.SCAN_MODE_BALANCED) // ~25 % of the time
+    // Extended advertising (broadcast alerts) is only reported with legacy-only scanning turned off.
+    if (Build.VERSION.SDK_INT >= 26 && adapter.isLeExtendedAdvertisingSupported) scan.setLegacy(false).setPhy(ScanSettings.PHY_LE_ALL_SUPPORTED)
     adapter.bluetoothLeScanner?.startScan(
-      listOf(ScanFilter.Builder().setServiceUuid(ParcelUuid(SERVICE)).build()),
-      // Battery: BALANCED scans ~25% of the time instead of 100%; discovery takes a few s longer.
-      ScanSettings.Builder().setScanMode(ScanSettings.SCAN_MODE_BALANCED).build(),
+      listOf(
+        ScanFilter.Builder().setServiceUuid(ParcelUuid(SERVICE)).build(),
+        ScanFilter.Builder().setServiceData(ParcelUuid(ADV), ByteArray(0), ByteArray(0)).build(),
+      ),
+      scan.build(),
       scanCallback,
     )
+  }
+
+  private fun hexBytes(h: String) = ByteArray(h.length / 2) { h.substring(it * 2, it * 2 + 2).toInt(16).toByte() }
+
+  /** The mesh name a scanned phone advertises: service data (Android) or local name (iPhone). */
+  private fun nameOf(r: ScanResult): String? {
+    r.scanRecord?.getServiceData(ParcelUuid(SERVICE))?.takeIf { it.size == 6 }?.let { b -> return b.joinToString("") { "%02x".format(it) } }
+    return r.scanRecord?.deviceName?.takeIf { Regex("^[0-9a-f]{12}$").matches(it) }
   }
 
   private fun stop() {
     val adapter = manager.adapter ?: return
     runCatching { adapter.bluetoothLeScanner?.stopScan(scanCallback) }
     runCatching { adapter.bluetoothLeAdvertiser?.stopAdvertising(advertiseCallback) }
+    runCatching { adapter.bluetoothLeAdvertiser?.stopAdvertisingSet(advSetCallback) }
+    watchdog.post { advs.clear(); advSet = null; watchdog.removeCallbacks(rotator) }
     links.values.forEach { it.failAll(); runCatching { it.gatt.close() } }
     links.clear()
     runCatching { server?.close() }
     server = null
   }
 
-  private fun send(peerId: String, text: String, promise: expo.modules.kotlin.Promise) {
+  private fun send(peerId: String, text: String, urgent: Boolean, promise: expo.modules.kotlin.Promise) {
     val link = links[peerId] ?: return promise.reject("ERR_BLE_PEER", "Pair BLE inconnu", null)
+    if (urgent) fast(link)
     val bytes = text.toByteArray(Charsets.UTF_8)
     val size = link.mtu - 3 - HEADER // one ATT packet, so the peer never needs prepared writes
     val total = (bytes.size + size - 1) / size
@@ -122,7 +150,7 @@ class BleMeshModule : Module() {
         val part = bytes.copyOfRange(i * size, minOf(bytes.size, (i + 1) * size))
         val b = ByteBuffer.allocate(HEADER + part.size)
           .putShort(id.toShort()).putShort(i.toShort()).putShort(n.toShort()).put(part).array()
-        link.queue.addLast(Chunk(b, if (i == n - 1) promise else null))
+        link.queue.addLast(Chunk(b, if (i == n - 1) promise else null, urgent))
       }
     }
     pump(link)
@@ -139,7 +167,7 @@ class BleMeshModule : Module() {
       link.busy = true
       chunk = c.bytes
     }
-    val type = BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
+    val type = if (link.current?.urgent == true) BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE else BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
     val ok = if (Build.VERSION.SDK_INT >= 33) {
       link.gatt.writeCharacteristic(char, chunk, type) == BluetoothStatusCodes.SUCCESS
     } else {
@@ -149,6 +177,87 @@ class BleMeshModule : Module() {
     // A write that never completes (stack stall) would block this link forever: give up and drop it.
     val sent = link.current
     watchdog.postDelayed({ if (link.current === sent && sent != null) { link.failAll(); runCatching { link.gatt.disconnect() } } }, WRITE_TIMEOUT_MS)
+  }
+
+  /** Links idle in low-power mode (an exchange every ~100 ms); an alert switches the link to the fast mode
+   *  (~15 ms) for a few seconds, then back. Batteries for positions, speed for alerts. */
+  private val slowDown = HashMap<Link, Runnable>()
+  private fun fast(link: Link) {
+    runCatching { link.gatt.requestConnectionPriority(BluetoothGatt.CONNECTION_PRIORITY_HIGH) }
+    watchdog.post {
+      slowDown.remove(link)?.let { watchdog.removeCallbacks(it) }
+      val r = Runnable { slowDown.remove(link); runCatching { link.gatt.requestConnectionPriority(BluetoothGatt.CONNECTION_PRIORITY_LOW_POWER) } }
+      slowDown[link] = r
+      watchdog.postDelayed(r, 8_000L)
+    }
+  }
+
+  // ---- Broadcast (alerts in the advertising signal, received by every phone in range, no link needed) ----
+  // Needs BLE 5 extended advertising to fit a whole alert (~60 bytes); older phones only receive.
+
+  private class Adv(val data: ByteArray, val at: Long)
+  private val advs = LinkedHashMap<String, Adv>() // main thread only
+  private var advSet: AdvertisingSet? = null
+  private var advStarting = false
+  private var advTurn = 0
+  private val seenAdv = LinkedHashMap<String, Long>() // payloads already passed to JS, to skip repeats
+
+  private fun broadcast(id: String, text: String) {
+    val data = android.util.Base64.decode(text, android.util.Base64.NO_WRAP)
+    watchdog.post {
+      advs.remove(id)
+      advs[id] = Adv(data, System.currentTimeMillis())
+      seenAdv[text] = System.currentTimeMillis() // our own: don't hand it back to JS when we hear it relayed
+      rotate()
+    }
+  }
+
+  private val rotator = Runnable { rotate() }
+  private fun rotate() {
+    watchdog.removeCallbacks(rotator)
+    val now = System.currentTimeMillis()
+    advs.values.removeAll { now - it.at > ADV_KEEP_MS }
+    val adapter = manager.adapter
+    val advertiser = adapter?.bluetoothLeAdvertiser
+    if (advs.isEmpty() || adapter == null || advertiser == null || Build.VERSION.SDK_INT < 26 || !adapter.isLeExtendedAdvertisingSupported) {
+      advSet?.let { runCatching { advertiser?.stopAdvertisingSet(advSetCallback) } }
+      advSet = null
+      return
+    }
+    val list = advs.values.toList()
+    // The UUID is listed too: iPhones can only scan for listed service UUIDs.
+    val data = AdvertiseData.Builder().addServiceUuid(ParcelUuid(ADV)).addServiceData(ParcelUuid(ADV), list[advTurn++ % list.size].data).build()
+    val set = advSet
+    if (set != null) runCatching { set.setAdvertisingData(data) }
+    else if (!advStarting) {
+      advStarting = true
+      val params = AdvertisingSetParameters.Builder()
+        .setLegacyMode(false).setConnectable(false).setScannable(false)
+        .setInterval(AdvertisingSetParameters.INTERVAL_LOW) // ~100 ms, only while alerts are being broadcast
+        .setTxPowerLevel(AdvertisingSetParameters.TX_POWER_HIGH)
+        .setPrimaryPhy(BluetoothDevice.PHY_LE_1M).setSecondaryPhy(BluetoothDevice.PHY_LE_1M).build()
+      runCatching { advertiser.startAdvertisingSet(params, data, null, null, null, advSetCallback) }.onFailure { advStarting = false }
+    }
+    watchdog.postDelayed(rotator, ADV_ROTATE_MS)
+  }
+
+  private val advSetCallback = object : AdvertisingSetCallback() {
+    override fun onAdvertisingSetStarted(set: AdvertisingSet?, txPower: Int, status: Int) {
+      watchdog.post { advStarting = false; advSet = if (status == ADVERTISE_SUCCESS) set else null }
+    }
+    override fun onAdvertisingSetStopped(set: AdvertisingSet?) { watchdog.post { if (advSet === set) advSet = null } }
+  }
+
+  /** An alert heard in someone's advertising: handed to JS once per payload (repeats every 100 ms otherwise). */
+  private fun heard(data: ByteArray) {
+    val text = android.util.Base64.encodeToString(data, android.util.Base64.NO_WRAP)
+    watchdog.post {
+      val now = System.currentTimeMillis()
+      if (now - (seenAdv[text] ?: 0) < ADV_KEEP_MS) return@post
+      seenAdv[text] = now
+      while (seenAdv.size > 256) seenAdv.remove(seenAdv.keys.first())
+      sendEvent("onText", mapOf("peerId" to "adv", "text" to text))
+    }
   }
 
   // ---- Receiving side (GATT server) ----
@@ -205,6 +314,7 @@ class BleMeshModule : Module() {
 
   private val scanCallback = object : ScanCallback() {
     override fun onScanResult(callbackType: Int, result: ScanResult) {
+      result.scanRecord?.getServiceData(ParcelUuid(ADV))?.let { heard(it); return }
       val addr = result.device.address
       val now = System.currentTimeMillis()
       // Backoff 10 s, 20 s… up to ~5 min for addresses that keep failing; a cap on links; skip weak signals.
@@ -213,7 +323,7 @@ class BleMeshModule : Module() {
       if (lastTry.size > 2000) lastTry.clear() // rotating addresses: don't grow forever
       lastTry[addr] = now
       val gatt = result.device.connectGatt(ctx, false, gattCallback, BluetoothDevice.TRANSPORT_LE) ?: return
-      links[addr] = Link(gatt)
+      links[addr] = Link(gatt, nameOf(result))
     }
   }
 
@@ -245,7 +355,7 @@ class BleMeshModule : Module() {
       fails.remove(gatt.device.address)
       // Idle links don't need fast connection events: saves battery on every link.
       gatt.requestConnectionPriority(BluetoothGatt.CONNECTION_PRIORITY_LOW_POWER)
-      sendEvent("onPeer", mapOf("peerId" to gatt.device.address))
+      sendEvent("onPeer", mapOf("peerId" to gatt.device.address, "name" to link.name))
     }
 
     override fun onCharacteristicWrite(gatt: BluetoothGatt, characteristic: BluetoothGattCharacteristic, status: Int) {

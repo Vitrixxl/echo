@@ -12,7 +12,7 @@
 //    going with the screen off, when the app's timers are frozen).
 import type { Alert } from './alerts';
 
-export type Transport = (peer: string, text: string) => Promise<unknown>;
+export type Transport = (peer: string, text: string, urgent: boolean) => Promise<unknown>;
 
 export class Outbox {
   private wait = new Map<string, { raw: string[]; recs: Map<string, Alert>; busy: boolean }>();
@@ -54,7 +54,7 @@ export class Outbox {
   private pump(peer: string) {
     const q = this.wait.get(peer);
     if (!q || q.busy) return;
-    let text = q.raw.shift();
+    let text = q.raw.shift(), urgent = false;
     if (text === undefined) {
       if (!q.recs.size) return;
       const all = [...q.recs.values()];
@@ -70,9 +70,10 @@ export class Outbox {
         text = t;
       }
       for (const a of batch) q.recs.delete(a.id);
+      urgent = sos.length > 0;
     }
     q.busy = true;
-    this.transport(peer, text)
+    this.transport(peer, text, urgent)
       .catch(() => {}) // a lost link is dropped by its disconnect event; the records reach it again on reconnect
       .finally(() => {
         q.busy = false;

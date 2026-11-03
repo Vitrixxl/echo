@@ -77,18 +77,25 @@ export function useMesh() {
   const [incoming, setIncoming] = useState<Alert | null>(null);
   const [secrets, setSecrets] = useState<Record<string, string>>({});
 
-  // Battery/RAM: medic pings arrive constantly, so UI updates are batched (one render per
-  // 500 ms max) and only SOS hit the disk (medic dots expire in minutes anyway), at most every 5 s.
+  // Battery/RAM: medic pings arrive constantly, so UI updates are batched: within 500 ms when an alert changed,
+  // 2 s when only medic positions did. Only SOS hit the disk (medic dots expire in minutes anyway), every 5 s max.
   const uiTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const diskTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const sosDirty = useRef(false);
+  const uiDue = useRef(0);
   const commit = (changed: Alert[] = []) => {
-    if (changed.some((a) => a.kind === 'sos')) sosDirty.current = true;
-    uiTimer.current ??= setTimeout(() => {
-      uiTimer.current = null;
-      prune(store.current);
-      setRecords(Object.values(store.current));
-    }, 500);
+    const sos = !changed.length || changed.some((a) => a.kind === 'sos');
+    if (sos) sosDirty.current = true;
+    const due = Date.now() + (sos ? 500 : 2000);
+    if (uiTimer.current && due < uiDue.current) { clearTimeout(uiTimer.current); uiTimer.current = null; }
+    if (!uiTimer.current) {
+      uiDue.current = due;
+      uiTimer.current = setTimeout(() => {
+        uiTimer.current = null;
+        prune(store.current);
+        setRecords(Object.values(store.current));
+      }, due - Date.now());
+    }
     if (sosDirty.current)
       diskTimer.current ??= setTimeout(() => {
         diskTimer.current = null;
@@ -98,19 +105,39 @@ export function useMesh() {
       }, 5000);
   };
   // Per neighbour: SOS first, latest version of each record, one message in flight (see outbox.ts).
-  const [outbox] = useState(() => new Outbox((peerId, text) =>
-    peerId.startsWith(BLE) ? BleMesh.send(peerId.slice(BLE.length), text) : Nearby.sendText(peerId, text), encodeRecords));
+  const [outbox] = useState(() => new Outbox((peerId, text, urgent) =>
+    peerId.startsWith(BLE) ? BleMesh.send(peerId.slice(BLE.length), text, urgent) : Nearby.sendText(peerId, text), encodeRecords));
+  // Alerts (new, closed) also go out in the Bluetooth advertising signal: every phone in range hears them at once,
+  // linked or not. Each phone that learns one rebroadcasts it, so it floods without any link at all.
+  const shout = (changed: Alert[]) => {
+    for (const a of changed) if (a.kind === 'sos') { try { BleMesh.broadcast(a.id, encodeRecords([a])); } catch {} }
+  };
   const sendText = (peerId: string, text: string) => outbox.pushRaw(peerId, text);
   const send = (peerId: string, list: Alert[]) => outbox.push(peerId, list);
   const broadcast = (list: Alert[], except?: string) => {
     for (const p of peers.current) if (p !== except) send(p, list);
   };
   const publish = (a: Alert) => {
-    if (merge(store.current, [a]).length) { broadcast([a]); commit([a]); }
+    if (merge(store.current, [a]).length) { broadcast([a]); shout([a]); commit([a]); }
   };
 
   useEffect(() => {
-    const link = (peerId: string) => {
+    // One link per neighbour: two Android (or two iPhones) close by link over both Bluetooth and Nearby
+    // (Multipeer), and every message would cross twice. Both sides advertise the same random NAME, so a
+    // Bluetooth link to a phone already linked over Nearby (faster) is kept in reserve, used if Nearby drops.
+    const names = new Map<string, string>(); // peerId -> mesh name, when known
+    const spare = new Set<string>(); // Bluetooth links held back: their phone is linked over Nearby
+    const twin = (peerId: string) => {
+      const n = names.get(peerId);
+      return n ? [...peers.current, ...spare].filter((q) => q !== peerId && names.get(q) === n) : [];
+    };
+    const link = (peerId: string, name?: string | null) => {
+      if (name) names.set(peerId, name);
+      const ble = peerId.startsWith(BLE);
+      if (ble && twin(peerId).some((q) => !q.startsWith(BLE) && peers.current.has(q))) { spare.add(peerId); return; }
+      if (!ble) for (const q of twin(peerId)) if (q.startsWith(BLE) && peers.current.has(q)) {
+        peers.current.delete(q); outbox.drop(q); spare.add(q);
+      }
       peers.current.add(peerId);
       setPeerCount(peers.current.size);
       const all = Object.values(store.current);
@@ -123,10 +150,14 @@ export function useMesh() {
     };
     const answered = new Set<string>(); // peers whose digest we already answered on this link
     const unlink = (peerId: string) => {
+      const reserve = peerId.startsWith(BLE) ? [] : twin(peerId).filter((q) => spare.has(q));
+      spare.delete(peerId);
+      names.delete(peerId);
       peers.current.delete(peerId);
       outbox.drop(peerId);
       answered.delete(peerId);
       setPeerCount(peers.current.size);
+      for (const q of reserve) { spare.delete(q); link(q); } // Nearby dropped: its Bluetooth twin takes over
     };
     const receive = (peerId: string, text: string) => {
       const msg = decode(text); // compact binary format (codec.ts); anything malformed decodes to null
@@ -152,6 +183,7 @@ export function useMesh() {
       const changed = merge(store.current, room);
       if (!changed.length) return;
       broadcast(changed, peerId);
+      shout(changed);
       commit(changed);
       const fresh = changed.find((a) => a.kind === 'sos' && a.status === 'need' && !known.has(a.id));
       if (fresh) setIncoming(fresh);
@@ -161,16 +193,16 @@ export function useMesh() {
     let discovering = false;
 
     const subs = [
-      BleMesh.addListener('onPeer', ({ peerId }) => link(BLE + peerId)),
+      BleMesh.addListener('onPeer', ({ peerId, name }) => link(BLE + peerId, name)),
       BleMesh.addListener('onPeerLost', ({ peerId }) => unlink(BLE + peerId)),
-      BleMesh.addListener('onText', ({ peerId, text }) => receive(BLE + peerId, text)),
+      BleMesh.addListener('onText', ({ peerId, text }) => receive(peerId === 'adv' ? 'adv' : BLE + peerId, text)),
       Nearby.onPeerFound(({ peerId, name }) => {
         found.current.set(peerId, name);
         if (NAME < name) connect(peerId); // the other side waits; the retry loop covers one-way discovery
       }),
       Nearby.onPeerLost(({ peerId }) => found.current.delete(peerId)),
       Nearby.onInvitationReceived(({ peerId }) => Nearby.acceptConnection(peerId).catch(() => {})),
-      Nearby.onConnected(({ peerId }) => link(peerId)),
+      Nearby.onConnected(({ peerId }) => link(peerId, found.current.get(peerId))),
       Nearby.onDisconnected(({ peerId }) => unlink(peerId)),
       Nearby.onTextReceived(({ peerId, text }) => receive(peerId, text)),
     ].map((s) => (typeof s === 'function' ? s : () => s.remove()));
@@ -181,7 +213,7 @@ export function useMesh() {
       if (missing.length)
         return setError('Autorise « Appareils à proximité » pour relayer les alertes. Touche ici pour ouvrir les réglages.');
       const errs: string[] = [];
-      await BleMesh.start().catch((e) => errs.push('Bluetooth : ' + short(e)));
+      await BleMesh.start(NAME).catch((e) => errs.push('Bluetooth : ' + short(e)));
       try {
         if (Platform.OS === 'android' && !(await Nearby.isPlayServicesAvailable())) throw new Error('Google Play Services absent');
         await Nearby.stopDiscovery().catch(() => {});

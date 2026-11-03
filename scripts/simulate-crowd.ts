@@ -26,12 +26,12 @@ type Strategy = {
   longLinks: boolean; // keep one slot for a far neighbour (a "bridge" that speeds up crossing the crowd)
   rotate: number; // s: at the link cap, drop the oldest idle link this often to meet new neighbours (0 = never)
   wire: 'json40' | 'compact'; // json40: JSON messages of up to 40 records; compact: binary, one packet, alerts alone
+  adv?: boolean; // alerts also broadcast in the advertising signal (Android with BLE 5: ~70 % of phones here)
 };
 
 const STRATEGIES: Strategy[] = [
-  { name: 'avant (JSON, paquets de 40)', cap: 7, queue: 'priority', pingEvery: 20, pingKeepalive: 90, pingMoveM: 20, longLinks: false, rotate: 0, wire: 'json40' },
   { name: 'compact, alerte seule', cap: 7, queue: 'priority', pingEvery: 20, pingKeepalive: 90, pingMoveM: 20, longLinks: false, rotate: 0, wire: 'compact' },
-  { name: 'première version (FIFO, pings 10 s)', cap: 7, queue: 'fifo', pingEvery: 10, pingKeepalive: 60, pingMoveM: 0, longLinks: false, rotate: 0, wire: 'json40' },
+  { name: '+ diffusion dans le signal', cap: 7, queue: 'priority', pingEvery: 20, pingKeepalive: 90, pingMoveM: 20, longLinks: false, rotate: 0, wire: 'compact', adv: true },
 ];
 
 type Scenario = { name: string; phones: number; medicShare: number; length: number; width: number; still: number; rate: number };
@@ -156,6 +156,15 @@ function run(sc: Scenario, st: Strategy, seed: number) {
           merge(p.store, [rec], T0 + now * 1000);
           flood(p, [rec]);
         }
+      }
+    }
+    // broadcast: a phone holding the SOS (and able to advertise it) is heard by everyone in range within ~0.1-0.7 s
+    // (its advertising rotates every 0.6 s, ~100 ms interval); hearing works on every phone, iPhones included.
+    if (st.adv && sosId) for (const p of phones) {
+      if (p.got < 0 || p.i % 10 >= 7 || r() > DT / 0.4) continue;
+      for (const q of near(p)) if (q.got < 0 && dist(p, q) < pairRange(p.i, q.i)) {
+        const rec = p.store[sosId];
+        if (rec) receive(q, -1, [rec]);
       }
     }
     // the SOS

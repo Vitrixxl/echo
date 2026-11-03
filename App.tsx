@@ -330,7 +330,9 @@ function MapScreen({ role, city, onSwitch }: { role: Role; city: City | null; on
   useEffect(() => {
     startGps().catch(() => {});
     const app = AppState.addEventListener('change', (st) => {
-      if (role === 'medic' || manifRef.current) return; // medics and mode manif keep the GPS on
+      // Medics keep the GPS on (heartbeat, "sur place"). Civilians don't need it with the screen off, mode manif
+      // included: an alert asks for a fresh precise fix when it is raised, and relaying needs no position.
+      if (role === 'medic') return;
       if (st === 'active') startGps().catch(() => {});
       else stopGps();
     });

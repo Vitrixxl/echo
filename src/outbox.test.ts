@@ -9,7 +9,7 @@ const rec = (id: string, kind: 'sos' | 'medic', updatedAt = 1): Alert =>
 function slowRadio() {
   const sent: string[] = [];
   const waiting: (() => void)[] = [];
-  const transport = (_peer: string, text: string) => new Promise<void>((done) => { sent.push(text); waiting.push(done); });
+  const transport = (_peer: string, text: string, _urgent?: boolean) => new Promise<void>((done) => { sent.push(text); waiting.push(done); });
   const next = async () => { waiting.shift()?.(); await Promise.resolve(); await Promise.resolve(); };
   return { sent, transport, next };
 }
