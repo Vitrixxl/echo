@@ -71,7 +71,8 @@ App Store Connect > Business > Compliance (ou Informations sur l'app > Digital S
   - Usage : fonctionnalités de l'app.
   - Liée à l'identité : non. Utilisée pour le suivi : non.
   - (La position ne va jamais sur nos serveurs. Elle est transmise de téléphone en téléphone quand on lance une alerte, ou en continu pour les medics. Déclarée par prudence.)
-- Rien d'autre : la vérification de mise à jour (identifiant aléatoire, IP) n'est pas conservée, et le compteur d'installations ne garde qu'un total.
+- **Usage Data > Product Interaction** : le compteur d'installations (un « +1 » au premier lancement, rien d'autre de gardé). Usage : Analytics. Non liée. Pas de suivi.
+- Rien d'autre : la vérification de mise à jour (identifiant aléatoire, IP) n'est pas conservée.
 - Suivi (tracking) : **non**.
 
 ## Chiffrement (export)
