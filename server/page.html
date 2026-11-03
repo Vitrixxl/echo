@@ -39,6 +39,13 @@ h2{font-size:clamp(28px,7.5vw,40px);line-height:1.05;font-weight:900;letter-spac
 .fact{background:#171A21;border-radius:18px;padding:16px}
 .fact b{display:block;font-size:22px;font-weight:900;margin-bottom:4px}
 .fact span{color:#9BA1A6;font-size:14px;line-height:1.4}
+dialog{border:0;padding:0;background:transparent;max-width:560px;width:100%;margin:auto auto 0;color:#F2F4F7}
+dialog::backdrop{background:rgba(5,6,8,.72)}
+.sheet{background:#171A21;border-radius:24px 24px 0 0;padding:28px 24px calc(20px + env(safe-area-inset-bottom))}
+.sheet h3{margin:0 0 12px;font-size:22px;font-weight:900;line-height:1.15}
+.sheet p{margin:0 0 12px;color:#9BA1A6;font-size:16px;line-height:1.5}
+.sheet .later{display:block;margin:20px auto 16px;background:none;border:0;color:#9BA1A6;font:inherit;font-size:15px;text-decoration:underline;cursor:pointer}
+.sheet .b{margin:0}
 footer{text-align:center;font-size:14px}
 footer a{color:#9BA1A6;text-decoration:none}
 </style></head><body><main>
@@ -65,7 +72,20 @@ footer a{color:#9BA1A6;text-decoration:none}
 <div class="facts"><div class="fact"><b>0 internet</b><span>Les téléphones se parlent directement.</span></div><div class="fact"><b>Sans compte</b><span>Les alertes ne passent par aucun serveur.</span></div></div>
 </section>
 <footer><a href="https://github.com/Vitrixxl/echo">Code source sur GitHub</a> · <a href="/confidentialite">Confidentialité</a></footer>
-</main><script>
+</main>
+<dialog id="apk" aria-labelledby="apk-t"><div class="sheet">
+<h3 id="apk-t">Pas encore sur le Play Store</h3>
+<p>En raison de l'urgence de la situation, l'application n'a pas pu être publiée sur le Play Store à temps. Il faut donc télécharger le fichier d'installation (APK) directement ici.</p>
+<p>Ton téléphone te demandera d'autoriser l'installation depuis ton navigateur : accepte, puis ouvre le fichier téléchargé.</p>
+<button class="later" type="button" onclick="this.closest('dialog').close()">Annuler</button>
+<a class="b android" href="/download" onclick="this.closest('dialog').close()">TÉLÉCHARGER L'APK</a>
+</div></dialog>
+<script>
+// Android button: explain why it's an APK before downloading (without JS the link just downloads).
+document.querySelector('main a.android')?.addEventListener('click', (e) => { const d = document.getElementById('apk'); if (d.showModal) { e.preventDefault(); d.showModal(); } });
+document.getElementById('apk').addEventListener('click', (e) => { if (e.target === e.currentTarget) e.currentTarget.close(); });
+</script>
+<script>
 // Same model as scripts/simulate-crowd.ts (Bluetooth range 15-35 m, links 2-6 s to set up, 7 per phone,
 // one packet per alert, broadcast in the advertising signal), on a 400 m street, drawn in two rows.
 (() => {
