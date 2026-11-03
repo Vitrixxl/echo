@@ -14,7 +14,7 @@ Tout ce qu'App Store Connect demande, prêt à coller. Langue principale : fran�
 
 ## URLs
 
-- **Assistance** : https://brancard.vitrixxl.fr (contact en bas de page)
+- **Assistance** : https://brancard.vitrixxl.fr (contact en bas de page : vitrice91@gmail.com)
 - **Marketing** : https://brancard.vitrixxl.fr
 - **Politique de confidentialité** : https://brancard.vitrixxl.fr/confidentialite
 
@@ -81,7 +81,7 @@ HTTPS standard, hachage SHA-256 et vérification de signature des mises à jour 
 
 ## Notes pour l'examen (App Review)
 
-À coller dans « Notes » (App Review) et dans « Test Information » (TestFlight). Remplacer la vidéo et l'e-mail.
+À coller dans « Notes » (App Review) et dans « Test Information » (TestFlight). Remplacer le lien de la vidéo.
 
 > Brancard is a free, non-commercial coordination tool for volunteer first-aiders ("street medics") at public gatherings in France. It is NOT an emergency service and says so in the app (role screen and alert confirmation): users are told to call 15 / 112 for life-threatening emergencies, with a one-tap call to 112. There is no account, no login, no ads, no analytics.
 >
@@ -101,7 +101,7 @@ HTTPS standard, hachage SHA-256 et vérification de signature des mises à jour 
 >
 > Over-the-air updates (expo-updates, signed) are used only for bug fixes, never for new features.
 >
-> Privacy policy: https://brancard.vitrixxl.fr/confidentialite. Source code: https://github.com/Vitrixxl/echo. Contact: <EMAIL>
+> Privacy policy: https://brancard.vitrixxl.fr/confidentialite. Source code: https://github.com/Vitrixxl/echo. Contact: vitrice91@gmail.com
 
 ## Demande d'examen accéléré
 
