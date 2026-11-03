@@ -195,10 +195,12 @@ function Overlay({ onBack, children }: { onBack: () => void; children: ReactNode
 }
 
 function DialogModal({ dialog, onClose }: { dialog: Dialog | null; onClose: () => void }) {
+  const insets = useSafeAreaInsets();
   if (!dialog) return null;
   return (
     <Overlay onBack={onClose}>
-      <View style={s.dialogWrap}>
+      {/* at the bottom: the actions land under the thumb */}
+      <View style={[s.dialogWrap, { paddingBottom: insets.bottom + 12 }]}>
         <Pressable style={StyleSheet.absoluteFill} onPress={onClose} />
         <View style={s.dialog}>
           <View style={s.row}>
@@ -259,11 +261,12 @@ function EntryScreen({ medic, onEnter, onLater }: { medic: boolean; onEnter: () 
         ))}
       </View>
       <View style={{ flex: 1 }} />
-      <Text style={[s.roleBody, { textAlign: 'center', marginBottom: 12 }]}>La batterie se vide plus vite. Pense à une batterie externe.</Text>
-      <View style={{ flexDirection: 'row' }}><Btn label="J'entre en manif" color={C.red} onPress={onEnter} /></View>
-      <Pressable onPress={onLater} hitSlop={12} style={{ alignSelf: 'center', marginTop: 16 }} accessibilityRole="button">
+      <Text style={[s.roleBody, { textAlign: 'center', marginBottom: 16 }]}>La batterie se vide plus vite. Pense à une batterie externe.</Text>
+      <Pressable onPress={onLater} hitSlop={12} style={{ alignSelf: 'center', marginBottom: 16 }} accessibilityRole="button">
         <Text style={s.link}>Pas maintenant</Text>
       </Pressable>
+      {/* the main action sits lowest, under the thumb */}
+      <View style={{ flexDirection: 'row' }}><Btn label="J'entre en manif" color={C.red} onPress={onEnter} /></View>
     </View>
   );
 }
@@ -1003,7 +1006,7 @@ const s = StyleSheet.create({
   link: { color: C.muted, fontSize: 14, fontWeight: '600', textDecorationLine: 'underline' },
   cancelText: { color: C.muted, fontWeight: '700', fontSize: 16 },
 
-  dialogWrap: { flex: 1, justifyContent: 'center', padding: 24 },
+  dialogWrap: { flex: 1, justifyContent: 'flex-end', padding: 12 },
   dialog: { backgroundColor: C.card, borderRadius: 24, padding: 18, ...shadow },
   nav: { position: 'absolute', left: 12, right: 12, flexDirection: 'row', alignItems: 'center', gap: 12, backgroundColor: fill(C.blue), borderRadius: 20, padding: 12, ...shadow },
   navIcon: { width: 52, height: 52, borderRadius: 14, backgroundColor: '#ffffff26', alignItems: 'center', justifyContent: 'center' },
