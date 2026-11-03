@@ -105,7 +105,18 @@ public class BleMeshModule: Module {
     guard !link.busy, let char = link.char, !link.queue.isEmpty else { return }
     if link.queue[0].urgent {
       // Without response: no callback per write, the radio's buffer paces us (peripheralIsReady resumes).
-      guard link.peripheral.canSendWriteWithoutResponse else { return }
+      guard link.peripheral.canSendWriteWithoutResponse else {
+        // The radio never says ready (Bluetooth off, link half dead): give up and drop the link, like a write
+        // that never completes, instead of holding this peer's sends forever.
+        let n = link.writes
+        q.asyncAfter(deadline: .now() + WRITE_TIMEOUT) { [weak self] in
+          guard link.writes == n, !link.queue.isEmpty, !link.peripheral.canSendWriteWithoutResponse else { return }
+          link.failAll()
+          self?.central?.cancelPeripheralConnection(link.peripheral)
+        }
+        return
+      }
+      link.writes += 1
       let c = link.queue.removeFirst()
       link.peripheral.writeValue(c.data, for: char, type: .withoutResponse)
       c.done?.resolve(nil)
@@ -265,7 +276,7 @@ public class BleMeshModule: Module {
 
     func peripheral(_ p: CBPeripheral, didWriteValueFor characteristic: CBCharacteristic, error: Error?) {
       guard let m = m, let link = m.links[p.identifier] else { return }
-      if error != nil { link.failAll(); return }
+      if error != nil { link.failAll(); m.central?.cancelPeripheralConnection(p); return } // see Android: link in doubt
       let done = link.current?.done
       link.current = nil
       link.busy = false

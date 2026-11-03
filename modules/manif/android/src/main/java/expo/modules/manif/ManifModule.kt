@@ -44,6 +44,16 @@ class ManifModule : Module() {
       else if (Build.VERSION.SDK_INT >= 26) ctx.startForegroundService(i) else ctx.startService(i)
     }
 
+    // Mode manif: asks once to be left out of battery optimisation, or Doze and the makers' battery savers
+    // (Xiaomi, Samsung, Huawei…) still kill the relay after a while, foreground service or not.
+    Function("keepAlive") {
+      val pm = ctx.getSystemService(android.os.PowerManager::class.java)
+      if (Build.VERSION.SDK_INT >= 23 && !pm.isIgnoringBatteryOptimizations(ctx.packageName)) runCatching {
+        ctx.startActivity(Intent(android.provider.Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS)
+          .setData(android.net.Uri.parse("package:" + ctx.packageName)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+      }
+    }
+
     // A full-screen notification: with the screen off the system turns it on and opens Brancard over the lock screen.
     Function("wake") { title: String, body: String ->
       val nm = ctx.getSystemService(NotificationManager::class.java)

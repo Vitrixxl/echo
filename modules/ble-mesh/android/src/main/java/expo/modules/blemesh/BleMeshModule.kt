@@ -204,7 +204,8 @@ class BleMeshModule : Module() {
     } else {
       @Suppress("DEPRECATION") run { char.writeType = type; char.value = chunk; link.gatt.writeCharacteristic(char) }
     }
-    if (!ok) { link.failAll(); return }
+    // A failed write leaves the link in doubt: drop it, the peer gets everything again when it relinks.
+    if (!ok) { link.failAll(); runCatching { link.gatt.disconnect() }; return }
     // A write that never completes (stack stall) would block this link forever: give up and drop it.
     val sent = link.current
     watchdog.postDelayed({ if (link.current === sent && sent != null) { link.failAll(); runCatching { link.gatt.disconnect() } } }, WRITE_TIMEOUT_MS)
@@ -398,7 +399,7 @@ class BleMeshModule : Module() {
 
     override fun onCharacteristicWrite(gatt: BluetoothGatt, characteristic: BluetoothGattCharacteristic, status: Int) {
       val link = links[gatt.device.address] ?: return
-      if (status != BluetoothGatt.GATT_SUCCESS) { link.failAll(); return }
+      if (status != BluetoothGatt.GATT_SUCCESS) { link.failAll(); runCatching { gatt.disconnect() }; return }
       val done = synchronized(link) { val d = link.current?.done; link.current = null; link.busy = false; d }
       done?.resolve(null)
       pump(link)

@@ -33,7 +33,7 @@ test('one message at a time; SOS jump ahead of queued medic positions; positions
   expect(radio.sent.length).toBe(3);
 });
 
-test('protocol messages first; a dropped peer is forgotten; a failed send does not block the queue', async () => {
+test('protocol messages first; a dropped peer is forgotten; after a failed send the next push resumes', async () => {
   const radio = slowRadio();
   const box = new Outbox(radio.transport);
   box.push('p', [rec('a', 'sos')]);
@@ -48,7 +48,11 @@ test('protocol messages first; a dropped peer is forgotten; a failed send does n
   flaky.push('q', [rec('x', 'sos')]);
   flaky.push('q', [rec('y', 'sos')]);
   await new Promise((r) => setTimeout(r, 0));
-  expect(calls).toBe(2);
+  expect(calls).toBe(1); // stops: no retry storm on a link the native side is dropping
+  expect(flaky.pending('q')).toBe(2); // x put back, y still waiting
+  flaky.push('q', [rec('z', 'medic')]);
+  await new Promise((r) => setTimeout(r, 0));
+  expect(calls).toBe(4); // x, y, z all go
 });
 
 test('A sent the alert to B and is linked to C; when B relays it to C and C to A, A sends it back to neither', async () => {
@@ -82,4 +86,20 @@ test('a record that cannot be encoded is dropped instead of jamming the queue', 
   box.push('p', [rec('bad', 'sos'), rec('sos-2', 'sos')]);
   expect(JSON.parse(radio.sent[0]).map((a: Alert) => a.id)).toEqual(['sos-2']);
   expect(box.pending('p')).toBe(0);
+});
+
+test('a failed send is not counted as received: the alert goes again on the next push', async () => {
+  const sent: string[] = [];
+  let fail = true;
+  const box = new Outbox(async (_p, text) => { sent.push(text); if (fail) throw new Error('lost'); });
+  const sos = rec('sos-1', 'sos');
+  box.push('B', [sos]);
+  await new Promise((r) => setTimeout(r, 0));
+  expect(box.pending('B')).toBe(1); // back in the queue, not marked as known
+  fail = false;
+  box.push('B', [sos]);
+  await new Promise((r) => setTimeout(r, 0));
+  expect(sent.length).toBe(2);
+  box.push('B', [sos]); // now it has it
+  expect(sent.length).toBe(2);
 });

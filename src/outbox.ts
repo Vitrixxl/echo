@@ -10,8 +10,8 @@
 //    busy costs one send, not five;
 //  - the next message leaves only when the transport says the previous one is written (no timers, so it keeps
 //    going with the screen off, when the app's timers are frozen);
-//  - nothing goes to a neighbour that already has it: what it sent us, and what we sent it, are remembered per
-//    neighbour (A sent the alert to B; when C relays it to A, A doesn't send it back to B, nor to C). Checked
+//  - nothing goes to a neighbour that already has it: what it sent us, and what we sent it (once written), are
+//    remembered per neighbour (A sent the alert to B; when C relays it to A, A doesn't send it back to B, nor to C). Checked
 //    again just before sending, since the neighbour may have got it from someone else meanwhile.
 import type { Alert } from './alerts';
 
@@ -79,7 +79,7 @@ export class Outbox {
   private pump(peer: string) {
     const q = this.wait.get(peer);
     if (!q || q.busy) return;
-    let text = q.raw.shift(), urgent = false;
+    let text = q.raw.shift(), urgent = false, sent: Alert[] | undefined;
     if (text === undefined) {
       for (const [id, a] of q.recs) if (this.hasAlready(peer, a)) q.recs.delete(id); // got it elsewhere meanwhile
       if (!q.recs.size) return;
@@ -99,15 +99,22 @@ export class Outbox {
         text = t;
       }
       for (const a of batch) q.recs.delete(a.id);
-      this.has(peer, batch);
+      sent = batch;
       urgent = sos.length > 0;
     }
     q.busy = true;
-    this.transport(peer, text, urgent)
-      .catch(() => {}) // a lost link is dropped by its disconnect event; the records reach it again on reconnect
-      .finally(() => {
+    this.transport(peer, text, urgent).then(
+      () => {
+        if (sent) this.has(peer, sent); // only now does the neighbour have them
         q.busy = false;
         if (this.wait.get(peer) === q) this.pump(peer);
-      });
+      },
+      () => {
+        // Not sent. Put the records back (unless a newer version is already waiting) and stop here: the native
+        // side drops a failed link, and the next push (or the relink) sends them.
+        for (const a of sent ?? []) if (!q.recs.has(a.id)) q.recs.set(a.id, a);
+        q.busy = false;
+      },
+    );
   }
 }

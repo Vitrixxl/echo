@@ -236,6 +236,38 @@ function RoleScreen({ onPick }: { onPick: (r: Role) => void }) {
   );
 }
 
+/** "J'entre en manif" (Android): turns mode manif on, the phone keeps relaying with the screen off. */
+function EntryScreen({ medic, onEnter, onLater }: { medic: boolean; onEnter: () => void; onLater: () => void }) {
+  const insets = useSafeAreaInsets();
+  const points: [any, string][] = [
+    ['radio', "Ton téléphone relaie les alertes même écran éteint, dans ta poche. C'est ce qui les fait porter loin."],
+    ['lock-open', "Brancard s'affiche dès que tu rallumes l'écran, sans déverrouiller. Le reste du téléphone reste verrouillé."],
+    ['navigate', 'Ta position reste à jour : une alerte part tout de suite au bon endroit.'],
+    ...(medic ? [['alarm', "Une nouvelle alerte allume l'écran et sonne, comme un appel."] as [any, string]] : []),
+  ];
+  return (
+    <View style={[StyleSheet.absoluteFill, s.role, { paddingTop: insets.top + 48, paddingBottom: insets.bottom + 24 }]}>
+      <View style={s.logo}><Ionicons name="megaphone" size={30} color="#fff" /></View>
+      <Text style={s.h1}>Tu es en manif ?</Text>
+      <Text style={s.sub}>Sans le mode manif, Android met Brancard en veille quand l'écran s'éteint : l'alerte s'arrête à toi.</Text>
+      <View style={{ marginTop: 24, gap: 16 }}>
+        {points.map(([icon, text]) => (
+          <View key={icon} style={{ flexDirection: 'row', gap: 12, alignItems: 'flex-start' }}>
+            <Ionicons name={icon} size={20} color={C.red} style={{ marginTop: 1 }} />
+            <Text style={[s.roleBody, { flex: 1, fontSize: 15, lineHeight: 21, marginTop: 0 }]}>{text}</Text>
+          </View>
+        ))}
+      </View>
+      <View style={{ flex: 1 }} />
+      <Text style={[s.roleBody, { textAlign: 'center', marginBottom: 12 }]}>La batterie se vide plus vite. Pense à une batterie externe.</Text>
+      <Btn label="J'entre en manif" color={C.red} onPress={onEnter} />
+      <Pressable onPress={onLater} hitSlop={12} style={{ alignSelf: 'center', marginTop: 16 }} accessibilityRole="button">
+        <Text style={s.link}>Pas maintenant</Text>
+      </Pressable>
+    </View>
+  );
+}
+
 function RoleCard(p: { icon: any; color: string; title: string; body: string; onPress: () => void }) {
   return (
     <Pressable onPress={p.onPress} style={({ pressed }) => [s.roleCard, pressed && s.pressed]} accessibilityRole="button">
@@ -271,7 +303,12 @@ function MapScreen({ role, city, onSwitch }: { role: Role; city: City | null; on
   const [manif, setManif] = useState(false);
   const manifRef = useRef(manif);
   manifRef.current = manif;
-  useEffect(() => { AsyncStorage.getItem(MANIF_KEY).then((v) => v === '1' && setManif(true), () => {}); }, []);
+  // "J'entre en manif" screen: on opening the app while mode manif is off (Android: without it the phone stops
+  // relaying once the screen is off, and the alert stops there).
+  const [entry, setEntry] = useState(false);
+  useEffect(() => {
+    AsyncStorage.getItem(MANIF_KEY).then((v) => (v === '1' ? setManif(true) : setEntry(!!Manif)), () => setEntry(!!Manif));
+  }, []);
   // Économie de batterie: the map draws at most 30 frames/s (pans and camera moves cost half the GPU).
   const [eco, setEco] = useState(false);
   useEffect(() => { AsyncStorage.getItem(ECO_KEY).then((v) => v === '1' && setEco(true), () => {}); }, []);
@@ -284,18 +321,9 @@ function MapScreen({ role, city, onSwitch }: { role: Role; city: City | null; on
     if (manif || role === 'medic') ensurePermissions().finally(() => Manif!.setRelay(true));
     else Manif.setRelay(false);
   }, [manif, role]);
-  const toggleManif = () => {
-    const set = (on: boolean) => { setManif(on); AsyncStorage.setItem(MANIF_KEY, on ? '1' : '0').catch(() => {}); };
-    if (manif) return set(false);
-    setDialog({
-      icon: 'lock-open',
-      title: 'Mode manif',
-      body: "Brancard s'affiche dès que tu rallumes l'écran, sans déverrouiller. Le reste du téléphone reste verrouillé."
-        + (role === 'medic' ? '\n\nUne nouvelle alerte allume l\'écran.' : '')
-        + "\n\nLe GPS et le relais des alertes restent actifs écran éteint : la batterie se vide plus vite.",
-      actions: [{ label: 'Annuler' }, { label: 'Activer', color: C.red, onPress: () => set(true) }],
-    });
-  };
+  const setManifSaved = (on: boolean) => { setManif(on); AsyncStorage.setItem(MANIF_KEY, on ? '1' : '0').catch(() => {}); };
+  const enterManif = () => { setEntry(false); setManifSaved(true); Manif?.keepAlive(); };
+  const toggleManif = () => (manif ? setManifSaved(false) : setEntry(true));
 
   // GPS. Battery: medics need precise, frequent fixes ("sur place" is GPS-based); civilians
   // get a coarse, slow fix and stop entirely in the background.
@@ -330,9 +358,9 @@ function MapScreen({ role, city, onSwitch }: { role: Role; city: City | null; on
   useEffect(() => {
     startGps().catch(() => {});
     const app = AppState.addEventListener('change', (st) => {
-      // Medics keep the GPS on (heartbeat, "sur place"). Civilians don't need it with the screen off, mode manif
-      // included: an alert asks for a fresh precise fix when it is raised, and relaying needs no position.
-      if (role === 'medic') return;
+      // Medics keep the GPS on (heartbeat, "sur place"), and so does everyone in mode manif: an alert raised
+      // right after unlocking then starts from a recent position. Otherwise it stops with the screen off.
+      if (role === 'medic' || manifRef.current) return;
       if (st === 'active') startGps().catch(() => {});
       else stopGps();
     });
@@ -401,7 +429,6 @@ function MapScreen({ role, city, onSwitch }: { role: Role; city: City | null; on
       await Notifications.requestPermissionsAsync();
     })().catch(() => {});
   }, [role]);
-  const lastAlarm = useRef(0);
   // App not in front: a full-screen alert that lights the screen up, like a call (Android); a notification
   // where that doesn't exist (iPhone).
   const alarm = (title: string, body: string) => {
@@ -410,8 +437,8 @@ function MapScreen({ role, city, onSwitch }: { role: Role; city: City | null; on
   };
   useEffect(() => {
     const a = mesh.incoming;
-    if (!a || role !== 'medic' || Date.now() - lastAlarm.current < 20_000) return;
-    lastAlarm.current = Date.now();
+    // Every new alert rings, even seconds after another: several casualties at once is the norm in a charge.
+    if (!a || role !== 'medic') return;
     Vibration.vibrate([0, 500, 200, 500, 200, 500]);
     const body = [shownNote(a.note), describe(a, posRef.current)].filter(Boolean).join(' · ');
     if (AppState.currentState === 'active') return;
@@ -489,7 +516,7 @@ function MapScreen({ role, city, onSwitch }: { role: Role; city: City | null; on
     if (AppState.currentState !== 'active') alarm('Tu es sur place', "On s'en occupe, ou besoin de renfort ?");
   }, [pos, going]);
 
-  // A medic on site asks for reinforcements: alert the other medics (rate-limited like new alerts).
+  // A medic on site asks for reinforcements: alert the other medics, every time.
   const toldHelp = useRef(new Set<string>());
   useEffect(() => {
     if (role !== 'medic') return;
@@ -497,8 +524,6 @@ function MapScreen({ role, city, onSwitch }: { role: Role; city: City | null; on
     const r = id && sos.find((x) => x.id === id);
     if (!id || !r) return;
     toldHelp.current.add(id);
-    if (Date.now() - lastAlarm.current < 20_000) return;
-    lastAlarm.current = Date.now();
     Vibration.vibrate([0, 500, 200, 500]);
     const body = [shownNote(r.note), describe(r, posRef.current)].filter(Boolean).join(' · ');
     setDialog({
@@ -863,6 +888,7 @@ function MapScreen({ role, city, onSwitch }: { role: Role; city: City | null; on
       </Overlay>}
 
       {cityOpen && <Overlay onBack={closeCity}><CityPicker onDone={cityDownloaded} onClose={closeCity} /></Overlay>}
+      {entry && <EntryScreen medic={role === 'medic'} onEnter={enterManif} onLater={() => setEntry(false)} />}
       <DialogModal dialog={dialog} onClose={() => setDialog(null)} />
     </View>
   );
