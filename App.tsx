@@ -260,7 +260,7 @@ function EntryScreen({ medic, onEnter, onLater }: { medic: boolean; onEnter: () 
       </View>
       <View style={{ flex: 1 }} />
       <Text style={[s.roleBody, { textAlign: 'center', marginBottom: 12 }]}>La batterie se vide plus vite. Pense à une batterie externe.</Text>
-      <Btn label="J'entre en manif" color={C.red} onPress={onEnter} />
+      <View style={{ flexDirection: 'row' }}><Btn label="J'entre en manif" color={C.red} onPress={onEnter} /></View>
       <Pressable onPress={onLater} hitSlop={12} style={{ alignSelf: 'center', marginTop: 16 }} accessibilityRole="button">
         <Text style={s.link}>Pas maintenant</Text>
       </Pressable>
