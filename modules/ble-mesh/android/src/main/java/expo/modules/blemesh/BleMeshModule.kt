@@ -35,6 +35,9 @@ const val PENDING_MS = 15_000L
 class Partial(val parts: Array<ByteArray?>, val at: Long)
 
 const val MAX_LINKS = 7 // outgoing links; flooding only needs the crowd connected, more links just add traffic
+// All connections, ours and the ones neighbours open to us: most Bluetooth chips hold 8 to 10, beyond that new
+// ones fail (errors 133/257) and the links churn. Past this we stop opening new ones; others still reach us.
+const val MAX_CONNECTIONS = 9
 const val MIN_RSSI = -90 // weaker advertisers are at the edge of range: their links fail and churn
 const val WRITE_TIMEOUT_MS = 15_000L
 const val SETUP_TIMEOUT_MS = 10_000L // connect + MTU + service discovery; some chips never answer one of them
@@ -65,6 +68,8 @@ class BleMeshModule : Module() {
   private val manager get() = ctx.getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager
   private var server: BluetoothGattServer? = null
   private val links = ConcurrentHashMap<String, Link>()
+  private val incoming = ConcurrentHashMap.newKeySet<String>() // neighbours connected to our GATT server
+  // (the server also hears our own outgoing connections on some phones: those are counted once, as links)
   private val lastTry = ConcurrentHashMap<String, Long>()
   private val fails = ConcurrentHashMap<String, Int>() // failed connections per address, for backoff
   private val watchdog = android.os.Handler(android.os.Looper.getMainLooper())
@@ -165,6 +170,7 @@ class BleMeshModule : Module() {
     val lost = links.toMap()
     links.clear()
     lost.forEach { (addr, l) -> l.failAll(); runCatching { l.gatt.close() }; if (l.char != null) sendEvent("onPeerLost", mapOf("peerId" to addr)) }
+    incoming.clear()
     runCatching { server?.close() }
     server = null
   }
@@ -344,7 +350,11 @@ class BleMeshModule : Module() {
     }
 
     override fun onConnectionStateChange(device: BluetoothDevice, status: Int, newState: Int) {
-      if (newState == BluetoothProfile.STATE_DISCONNECTED) synchronized(inbox) { inbox.keys.removeAll { it.startsWith(device.address + ":") } }
+      if (newState == BluetoothProfile.STATE_CONNECTED) incoming.add(device.address)
+      if (newState == BluetoothProfile.STATE_DISCONNECTED) {
+        incoming.remove(device.address)
+        synchronized(inbox) { inbox.keys.removeAll { it.startsWith(device.address + ":") } }
+      }
     }
   }
 
@@ -359,7 +369,7 @@ class BleMeshModule : Module() {
       val now = System.currentTimeMillis()
       // Backoff 10 s, 20 s… up to ~5 min for addresses that keep failing; a cap on links; skip weak signals.
       val wait = 10_000L shl minOf(fails[addr] ?: 0, 5)
-      if (links.containsKey(addr) || links.size >= MAX_LINKS || result.rssi < MIN_RSSI || now - (lastTry[addr] ?: 0) < wait) return
+      if (links.containsKey(addr) || links.size >= MAX_LINKS || links.size + incoming.count { it !in links } >= MAX_CONNECTIONS || result.rssi < MIN_RSSI || now - (lastTry[addr] ?: 0) < wait) return
       if (lastTry.size > 2000) lastTry.clear() // rotating addresses: don't grow forever
       lastTry[addr] = now
       val gatt = result.device.connectGatt(ctx, false, gattCallback, BluetoothDevice.TRANSPORT_LE) ?: return

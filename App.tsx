@@ -776,6 +776,17 @@ function MapScreen({ role, city, onSwitch }: { role: Role; city: City | null; on
         </Pressable>
       )}
 
+      {mesh.clockSkewMin !== null && !mesh.error && !nav && (
+        // A wrong clock gets our alerts rejected by every other phone, silently.
+        <Pressable onPress={() => (Platform.OS === 'android' ? Linking.sendIntent('android.settings.DATE_SETTINGS') : Linking.openSettings()).catch(() => {})}
+          style={[s.err, { top: insets.top + topH }]} accessibilityRole="button">
+          <Ionicons name="time" size={18} color="#111" />
+          <Text style={s.errText}>
+            L'heure de ton téléphone est {mesh.clockSkewMin > 0 ? 'en retard' : 'en avance'} d'environ {Math.abs(mesh.clockSkewMin)} min sur les autres : tes alertes risquent d'être ignorées. Touche ici et règle l'heure sur automatique.
+          </Text>
+        </Pressable>
+      )}
+
       {mesh.incoming && role === 'medic' && (
         <Pressable style={[s.banner, { top: insets.top + topH }]}
           onPress={() => { focus(mesh.incoming!); mesh.clearIncoming(); }}>

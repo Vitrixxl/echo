@@ -152,6 +152,13 @@ export function trimClosed(store: Store, max: number) {
   for (const a of closed.slice(0, closed.length - max)) delete store[a.id];
 }
 
+/** How far our clock is off, in minutes, from neighbours' offsets (their time - ours, ms); null when fine.
+ *  Records arrive up to ~2 min old, so "behind" shows as > +3 min and "ahead" as < -6 min. */
+export function skewMinutes(offsets: number[]) {
+  const s = [...offsets].sort((a, b) => a - b), m = s[Math.floor(s.length / 2)];
+  return m > 3 * 60_000 || m < -6 * 60_000 ? Math.round(m / 60_000) : null;
+}
+
 /** Drops expired records, returns true if anything was removed. */
 export function prune(store: Store, now = Date.now()) {
   let removed = false;

@@ -150,3 +150,11 @@ test('closed SOS are trimmed oldest first; open ones untouched', async () => {
   trimClosed(store, 2);
   expect(Object.keys(store).sort()).toEqual(['b', 'c', 'd']);
 });
+
+test('clock skew: fine within a few minutes, flagged when clearly behind or ahead', async () => {
+  const { skewMinutes } = await import('./alerts');
+  const min = 60_000;
+  expect(skewMinutes([-1 * min, -0.5 * min, -2 * min])).toBeNull(); // normal relay delays
+  expect(skewMinutes([12 * min, 11 * min, 13 * min, -1 * min])).toBe(12); // we're 12 min behind
+  expect(skewMinutes([-15 * min, -16 * min, -14 * min])).toBe(-15); // we're ahead
+});

@@ -12,11 +12,13 @@ import * as Nearby from 'expo-nearby-connections';
 import { useEffect, useRef, useState } from 'react';
 import { AppState, PermissionsAndroid, Platform } from 'react-native';
 import BleMesh from '../modules/ble-mesh';
-import { digest, fitNote, hashSecret, merge, missingFrom, prune, trimClosed, type Alert, type Store } from './alerts';
+import { digest, fitNote, hashSecret, merge, skewMinutes, missingFrom, prune, trimClosed, type Alert, type Store } from './alerts';
 import { decode, encodeDigest, encodeRecords } from './codec';
 import { Outbox } from './outbox';
 
 const KEY = 'echo.records.v2'; // v2: SOS carry a key; records saved by older versions are not valid any more
+const ME_KEY = 'echo.me.v1'; // { id, at }: the medic id, kept across restarts for one day of march
+const ME_KEEP_MS = 12 * 60 * 60 * 1000;
 const MINE_KEY = 'echo.mine.v2'; // { id: secret } of SOS raised from this phone: the secret closes them
 // Google Nearby / Multipeer is off for now: Bluetooth only (one radio, less battery, works across Android and iPhone).
 // Flip back on with an update if needed; everything else still handles Nearby links.
@@ -33,11 +35,15 @@ const BLE = 'ble:'; // peer ids from the BLE transport are prefixed to route sen
 
 // Cryptographic randomness (Math.random can be predicted from its outputs, and SOS secrets must not be).
 const randomHex = (bytes: number) => bytesToHex(Crypto.getRandomBytes(bytes));
-// Random per launch. ME names this phone's medic record; NAME is what Nearby advertises over the air.
-// They differ, and SOS ids are fully random, so radio observers can't tie a medic to the alerts it raised.
-export const ME = randomHex(6);
+// ME names this phone's medic record: kept across restarts for 12 h (a restart mustn't leave a ghost medic on
+// every map, nor make a medic's own alert look like someone else's), then a new one. NAME is what we advertise
+// over the air, random per launch. They differ, and SOS ids are fully random, so radio observers can't tie a
+// medic to the alerts it raised.
+let ME = randomHex(6);
+let meReady = false; // no medic record before the saved ME is back
 const NAME = randomHex(6);
 const uid = () => randomHex(12);
+
 const short = (e: any) => String(e?.message ?? e).split('\n')[0];
 
 // Android drops overlapping permission dialogs, so every caller (mesh, GPS) shares one
@@ -78,6 +84,12 @@ export function useMesh() {
   const errorRef = useRef(error);
   errorRef.current = error;
   const [incoming, setIncoming] = useState<Alert | null>(null);
+  const [meId, setMeId] = useState('m-' + ME);
+  // Our clock against the neighbours': phones more than 10 min apart reject each other's records without a
+  // word. Medic positions are stamped when sent (every 90 s at most) and relayed in seconds, so the median of
+  // their (time - our time) tells how far off we are.
+  const [clockSkewMin, setClockSkewMin] = useState<number | null>(null);
+  const offsets = useRef(new Map<string, number>());
   const [secrets, setSecrets] = useState<Record<string, string>>({});
 
   // Battery/RAM: medic pings arrive constantly, so UI updates are batched: within 500 ms when an alert changed,
@@ -187,6 +199,13 @@ export function useMesh() {
       }
       const data = msg.records;
       if (data.length > MAX_PER_PAYLOAD) return;
+      const off = offsets.current;
+      for (const r of data) if (r?.kind === 'medic' && r.id !== meId && Number.isFinite(r.updatedAt)) {
+        off.delete(r.id);
+        off.set(r.id, r.updatedAt - Date.now());
+        if (off.size > 30) off.delete(off.keys().next().value!);
+      }
+      if (off.size >= 3) setClockSkewMin(skewMinutes([...off.values()]));
       const known = new Set(Object.keys(store.current));
       let sos = 0, medics = 0;
       for (const a of Object.values(store.current)) a.kind === 'medic' ? medics++ : a.status !== 'done' && sos++;
@@ -250,6 +269,13 @@ export function useMesh() {
     };
 
     (async () => {
+      try {
+        const me = JSON.parse((await AsyncStorage.getItem(ME_KEY)) ?? 'null');
+        if (me && /^[0-9a-f]{12}$/.test(me.id) && Date.now() - me.at < ME_KEEP_MS && me.at <= Date.now()) ME = me.id;
+        else AsyncStorage.setItem(ME_KEY, JSON.stringify({ id: ME, at: Date.now() })).catch(() => {});
+      } catch {}
+      meReady = true;
+      setMeId('m-' + ME);
       try {
         const saved = await AsyncStorage.getItem(KEY);
         if (saved) { merge(store.current, JSON.parse(saved)); commit(); shout(Object.values(store.current)); }
@@ -320,6 +346,7 @@ export function useMesh() {
   // they head to and, once there, how it goes ("care": on s'en occupe, "help": besoin de renfort).
   const medicCreated = useRef(Date.now());
   const pingMedic = (lat: number, lon: number, target: string | null, state: 'care' | 'help' | null) => {
+    if (!meReady) return;
     publish({
       id: 'm-' + ME, kind: 'medic', lat, lon, note: '', status: 'need',
       createdAt: medicCreated.current, updatedAt: Date.now(), ...(target ? { target } : {}), ...(target && state ? { state } : {}),
@@ -327,5 +354,5 @@ export function useMesh() {
   };
 
   const mine = Object.keys(secrets);
-  return { records, peerCount, error, incoming, mine, me: 'm-' + ME, clearIncoming: () => setIncoming(null), raise, cancel, resolve, pingMedic };
+  return { records, peerCount, error, incoming, mine, me: meId, clockSkewMin, clearIncoming: () => setIncoming(null), raise, cancel, resolve, pingMedic };
 }
