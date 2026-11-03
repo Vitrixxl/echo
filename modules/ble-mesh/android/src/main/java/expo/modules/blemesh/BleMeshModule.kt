@@ -37,6 +37,7 @@ class Partial(val parts: Array<ByteArray?>, val at: Long)
 const val MAX_LINKS = 7 // outgoing links; flooding only needs the crowd connected, more links just add traffic
 const val MIN_RSSI = -90 // weaker advertisers are at the edge of range: their links fail and churn
 const val WRITE_TIMEOUT_MS = 15_000L
+const val SETUP_TIMEOUT_MS = 10_000L // connect + MTU + service discovery; some chips never answer one of them
 
 /** One chunk to write; the last chunk of a message carries the JS promise, resolved once it is written.
  *  Urgent chunks (alerts) go without write response: no round trip per packet, and losses don't matter
@@ -362,8 +363,19 @@ class BleMeshModule : Module() {
       if (lastTry.size > 2000) lastTry.clear() // rotating addresses: don't grow forever
       lastTry[addr] = now
       val gatt = result.device.connectGatt(ctx, false, gattCallback, BluetoothDevice.TRANSPORT_LE) ?: return
-      links[addr] = Link(gatt, nameOf(result))
+      val link = Link(gatt, nameOf(result))
+      links[addr] = link
+      // A link takes one of the MAX_LINKS slots from here: if it isn't usable in time, free the slot (backoff
+      // applies to that address), or a few stuck ones would block every new link.
+      watchdog.postDelayed({ if (link.char == null && links.remove(addr, link)) giveUp(addr, gatt) }, SETUP_TIMEOUT_MS)
     }
+  }
+
+  /** A link that never became usable: closed, its address backed off. Never reported to JS (it never was). */
+  private fun giveUp(addr: String, gatt: BluetoothGatt) {
+    fails[addr] = (fails[addr] ?: 0) + 1
+    runCatching { gatt.disconnect() }
+    runCatching { gatt.close() }
   }
 
   private val gattCallback = object : BluetoothGattCallback() {
@@ -382,8 +394,10 @@ class BleMeshModule : Module() {
     }
 
     override fun onMtuChanged(gatt: BluetoothGatt, mtu: Int, status: Int) {
-      links[gatt.device.address]?.mtu = if (status == BluetoothGatt.GATT_SUCCESS) mtu else 23
-      gatt.discoverServices()
+      val addr = gatt.device.address
+      val link = links[addr] ?: return
+      link.mtu = if (status == BluetoothGatt.GATT_SUCCESS) mtu else 23
+      if (!gatt.discoverServices() && links.remove(addr, link)) giveUp(addr, gatt) // refused outright: don't wait
     }
 
     override fun onServicesDiscovered(gatt: BluetoothGatt, status: Int) {

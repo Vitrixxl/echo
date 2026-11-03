@@ -86,26 +86,35 @@ export function useMesh() {
   const diskTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const sosDirty = useRef(false);
   const uiDue = useRef(0);
+  const flushUi = () => {
+    if (uiTimer.current) { clearTimeout(uiTimer.current); uiTimer.current = null; }
+    prune(store.current);
+    setRecords(Object.values(store.current));
+  };
+  const flushDisk = () => {
+    if (diskTimer.current) { clearTimeout(diskTimer.current); diskTimer.current = null; }
+    sosDirty.current = false;
+    const sos = Object.values(store.current).filter((a) => a.kind === 'sos');
+    AsyncStorage.setItem(KEY, JSON.stringify(sos)).catch(() => {});
+  };
   const commit = (changed: Alert[] = []) => {
     const sos = !changed.length || changed.some((a) => a.kind === 'sos');
     if (sos) sosDirty.current = true;
+    // Screen off, Android freezes the app's timers: the batching below would hold everything until the screen
+    // comes back. So alerts and medics' "sur place / renfort" go through at once (their alarms ring now), and
+    // alerts hit the disk at once (the system may kill the app before the screen comes back).
+    if (AppState.currentState !== 'active') {
+      if (sos || changed.some((a) => a.state)) flushUi();
+      if (sos) flushDisk();
+      if (sos || changed.some((a) => a.state)) return;
+    }
     const due = Date.now() + (sos ? 500 : 2000);
     if (uiTimer.current && due < uiDue.current) { clearTimeout(uiTimer.current); uiTimer.current = null; }
     if (!uiTimer.current) {
       uiDue.current = due;
-      uiTimer.current = setTimeout(() => {
-        uiTimer.current = null;
-        prune(store.current);
-        setRecords(Object.values(store.current));
-      }, due - Date.now());
+      uiTimer.current = setTimeout(flushUi, due - Date.now());
     }
-    if (sosDirty.current)
-      diskTimer.current ??= setTimeout(() => {
-        diskTimer.current = null;
-        sosDirty.current = false;
-        const sos = Object.values(store.current).filter((a) => a.kind === 'sos');
-        AsyncStorage.setItem(KEY, JSON.stringify(sos)).catch(() => {});
-      }, 5000);
+    if (sosDirty.current) diskTimer.current ??= setTimeout(flushDisk, 5000);
   };
   // Per neighbour: SOS first, latest version of each record, one message in flight (see outbox.ts).
   const [outbox] = useState(() => new Outbox((peerId, text, urgent) =>
