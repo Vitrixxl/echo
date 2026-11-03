@@ -8,7 +8,7 @@
     "userInterfaceStyle": "dark",
     "ios": {
       "supportsTablet": false,
-      "bundleIdentifier": "org.echoalerte.app",
+      "bundleIdentifier": "fr.vitrixxl.brancard",
       "buildNumber": "1",
       "config": {
         "usesNonExemptEncryption": false
@@ -69,7 +69,7 @@
         "monochromeImage": "./assets/android-icon-monochrome.png"
       },
       "predictiveBackGestureEnabled": false,
-      "package": "org.echoalerte.app",
+      "package": "fr.vitrixxl.brancard",
       "allowBackup": false,
       "blockedPermissions": [
         "android.permission.SYSTEM_ALERT_WINDOW",

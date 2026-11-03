@@ -8,7 +8,7 @@ Tout ce qu'App Store Connect demande, prêt à coller. Langue principale : fran�
 - **Sous-titre** (30 car. max) : Alertes street medic sans réseau
 - **Catégorie principale** : Utilitaires
 - **Catégorie secondaire** : Navigation
-- **Bundle ID** : org.echoalerte.app
+- **Bundle ID** : fr.vitrixxl.brancard
 - **SKU** : brancard-ios-1
 - **Prix** : gratuit, toutes les régions (au minimum la France)
 
