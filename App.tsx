@@ -462,6 +462,25 @@ function MapScreen({ role, city, onSwitch }: { role: Role; city: City | null; on
     if (route && !sos.some((r) => r.id === route.to)) setRoute(null);
   }, [sos]);
 
+  // My alert closed by "a medic on site": anyone can claim that (no identities on the mesh), so the author
+  // gets the last word. If nobody actually came, one tap raises it again, same place, same details.
+  const toldClosed = useRef(new Set<string>());
+  useEffect(() => {
+    const r = mesh.records.find((x) => x.kind === 'sos' && x.status === 'done' && x.doneBy && mesh.mine.includes(x.id)
+      && !toldClosed.current.has(x.id) && Date.now() - x.updatedAt < 10 * 60_000);
+    if (!r) return;
+    toldClosed.current.add(r.id);
+    Vibration.vibrate([0, 300, 150, 300]);
+    setDialog({
+      icon: 'checkmark-circle', tone: C.green, title: 'Alerte marquée réglée',
+      body: "Un medic sur place a marqué ton alerte comme réglée. Si personne n'est venu t'aider, relance-la.",
+      actions: [
+        { label: "C'est réglé", color: C.green },
+        { label: "Relancer l'alerte", color: C.red, onPress: () => mesh.raise(r.lat, r.lon, r.note, role === 'medic' ? mesh.me : undefined) },
+      ],
+    });
+  }, [mesh.records]);
+
   const nav = going && route?.to === going && pos ? route : null;
   const g = useMemo(() => (nav?.exact && pos ? guidance(nav.coords, [pos.lon, pos.lat]) : null), [nav, pos]);
   const goingTo = sos.find((r) => r.id === going);

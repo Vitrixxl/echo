@@ -51,3 +51,12 @@ test('records carry the sender mesh name when given', () => {
   expect(decode(encodeRecords([a], '0123456789ab'))).toEqual({ records: [a], from: '0123456789ab' });
   expect(decode(encodeRecords([a]))).toEqual({ records: [a] });
 });
+
+test('forged invalid UTF-8 (id that would no longer fit once re-encoded) drops the whole message', () => {
+  const ok = encodeRecords([sos]);
+  const raw = Uint8Array.from(atob(ok), (c) => c.charCodeAt(0));
+  // replace the hex id with a 63-byte text id of 0xFF bytes
+  const idAt = 4, idLen = 1 + (raw[idAt] & 0x3f);
+  const forged = [...raw.slice(0, idAt), 63, ...Array(63).fill(0xff), ...raw.slice(idAt + idLen)];
+  expect(decode(btoa(String.fromCharCode(...forged)))).toBeNull();
+});

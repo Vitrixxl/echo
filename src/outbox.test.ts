@@ -74,3 +74,12 @@ test('a queued record the neighbour gets elsewhere meanwhile is not sent', async
   await radio.next();
   expect(radio.sent.length).toBe(1);
 });
+
+test('a record that cannot be encoded is dropped instead of jamming the queue', async () => {
+  const radio = slowRadio();
+  const enc = (l: Alert[]) => { if (l.some((a) => a.id === 'bad')) throw new Error('too long'); return JSON.stringify(l); };
+  const box = new Outbox(radio.transport, enc);
+  box.push('p', [rec('bad', 'sos'), rec('sos-2', 'sos')]);
+  expect(JSON.parse(radio.sent[0]).map((a: Alert) => a.id)).toEqual(['sos-2']);
+  expect(box.pending('p')).toBe(0);
+});

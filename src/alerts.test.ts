@@ -131,3 +131,22 @@ test('a medic on site can close an SOS, one far away cannot', () => {
   merge(u, [base], now);
   expect(merge(u, [{ ...far, lat: 48.86 }], now)).toEqual([]);
 });
+
+test('sizes are checked in UTF-8 bytes; notes are cut to fit, never mid-character', async () => {
+  const { isValid, fitNote } = await import('./alerts');
+  const now = Date.now();
+  const base = { kind: 'medic', lat: 1, lon: 1, note: '', status: 'need', createdAt: now, updatedAt: now };
+  expect(isValid({ ...base, id: 'é'.repeat(31) }, now)).toBe(true); // 62 bytes
+  expect(isValid({ ...base, id: '�'.repeat(63) }, now)).toBe(false); // 189 bytes
+  const n = fitNote('🚑'.repeat(120));
+  expect(new TextEncoder().encode(n).length).toBeLessThanOrEqual(255);
+  expect(n).toBe('🚑'.repeat(63));
+});
+
+test('closed SOS are trimmed oldest first; open ones untouched', async () => {
+  const { trimClosed } = await import('./alerts');
+  const s = (id: string, status: 'need' | 'done', updatedAt: number) => ({ id, kind: 'sos', status, updatedAt } as Alert);
+  const store: Store = { a: s('a', 'done', 1), b: s('b', 'done', 3), c: s('c', 'need', 0), d: s('d', 'done', 2) };
+  trimClosed(store, 2);
+  expect(Object.keys(store).sort()).toEqual(['b', 'c', 'd']);
+});

@@ -21,7 +21,8 @@ const STATUS: Status[] = ['need', 'taken', 'done'];
 const STATE = [undefined, 'care', 'help'] as const;
 const SEP = ' · ';
 const HEX = /^(?:[0-9a-f]{2})+$/;
-const enc = new TextEncoder(), dec = new TextDecoder('utf-8', { fatal: false });
+// fatal: invalid UTF-8 (forged ids that would no longer fit once re-encoded) rejects the whole message.
+const enc = new TextEncoder(), dec = new TextDecoder('utf-8', { fatal: true });
 
 // ---- writing ----
 class W {
@@ -48,7 +49,8 @@ function writeRecord(w: W, a: Alert) {
   let tags = 0;
   const text: string[] = [];
   for (const p of parts) { const i = TAGS.indexOf(p); if (i >= 0 && !(tags & (1 << i))) tags |= 1 << i; else text.push(p); }
-  const note = enc.encode(text.join(SEP)).slice(0, 255);
+  const note = enc.encode(text.join(SEP));
+  if (note.length > 255) throw new Error('note too long'); // isValid caps it; never cut a character in half
   const created = a.kind === 'medic' ? Math.max(a.createdAt, a.updatedAt - 0xffffffff) : a.createdAt; // medics: only updatedAt matters
   const f1 = (a.kind === 'medic' ? 1 : 0) | (STATUS.indexOf(a.status) << 1) | (Math.max(0, STATE.indexOf(a.state)) << 3)
     | (a.target ? 0x20 : 0) | (a.proof ? 0x40 : 0) | (a.doneBy ? 0x80 : 0);

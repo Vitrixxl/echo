@@ -72,6 +72,10 @@ export class Outbox {
     return q ? q.raw.length + q.recs.size : 0;
   }
 
+  private tryEncode(list: Alert[]) {
+    try { return this.encode(list); } catch { return null; }
+  }
+
   private pump(peer: string) {
     const q = this.wait.get(peer);
     if (!q || q.busy) return;
@@ -79,15 +83,18 @@ export class Outbox {
     if (text === undefined) {
       for (const [id, a] of q.recs) if (this.hasAlready(peer, a)) q.recs.delete(id); // got it elsewhere meanwhile
       if (!q.recs.size) return;
+      // A record that can't be encoded (forged by a peer) is dropped: it must never jam the queue.
+      for (const [id, a] of q.recs) if (this.tryEncode([a]) === null) q.recs.delete(id);
+      if (!q.recs.size) return;
       const all = [...q.recs.values()];
       const sos = all.filter((a) => a.kind === 'sos');
       const pool = sos.length ? sos : all; // alerts alone, before anything else
       // As many as fit in one packet (at least one: a bigger record is split by the transport).
       let batch = [pool[0]];
-      text = this.encode(batch);
+      text = this.tryEncode(batch)!;
       for (const a of pool.slice(1)) {
-        const t = this.encode([...batch, a]);
-        if (t.length > this.budget) break;
+        const t = this.tryEncode([...batch, a]);
+        if (t === null || t.length > this.budget) break;
         batch = [...batch, a];
         text = t;
       }

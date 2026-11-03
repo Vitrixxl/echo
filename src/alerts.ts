@@ -45,7 +45,10 @@ export const MAX_FUTURE_MS = 10 * 60 * 1000;
 const HEX64 = /^[0-9a-f]{64}$/; // the author's secret (32 bytes)
 const HEX32 = /^[0-9a-f]{32}$/; // its key: the first 16 bytes of its sha256 (128 bits: no one finds a secret for it)
 export const ON_SITE_M = 40; // a medic this close to an SOS counts as "sur place"
-const shortId = (s: unknown) => typeof s === 'string' && s.length > 0 && s.length <= 64;
+const utf8 = new TextEncoder();
+const bytes = (s: string) => utf8.encode(s).length;
+// Sizes in UTF-8 bytes, what the wire format holds (codec.ts): anything bigger couldn't be relayed.
+const shortId = (s: unknown) => typeof s === 'string' && s.length > 0 && bytes(s) <= 63;
 
 export const hashSecret = (secretHex: string) => bytesToHex(sha256(hexToBytes(secretHex)).slice(0, 16));
 const onSiteClose = (a: any, sos: { lat: number; lon: number }) =>
@@ -59,11 +62,11 @@ const expired = (a: Alert, now: number) =>
 // Peers are untrusted: drop anything malformed instead of letting it into the store.
 export function isValid(a: any, now = Date.now()): a is Alert {
   return (
-    a && typeof a.id === 'string' && a.id.length > 0 && a.id.length <= 64 &&
+    a && shortId(a.id) &&
     (a.kind === 'sos' || a.kind === 'medic') &&
     Number.isFinite(a.lat) && Math.abs(a.lat) <= 90 &&
     Number.isFinite(a.lon) && Math.abs(a.lon) <= 180 &&
-    typeof a.note === 'string' && a.note.length <= 200 &&
+    typeof a.note === 'string' && a.note.length <= 200 && bytes(a.note) <= 255 &&
     Object.prototype.hasOwnProperty.call(RANK, a.status) &&
     (a.target === undefined || shortId(a.target)) &&
     (a.state === undefined || a.state === 'care' || a.state === 'help') &&
@@ -132,6 +135,21 @@ export function missingFrom(store: Store, theirs: unknown): Alert[] {
     const h = has.get(a.id);
     return !h || (a.updatedAt !== h[0] ? a.updatedAt > h[0] : RANK[a.status] > h[1]);
   });
+}
+
+/** Cuts a note to what the wire format holds (255 UTF-8 bytes, 200 characters), never mid-character. */
+export function fitNote(note: string) {
+  let s = note.slice(0, 200);
+  while (bytes(s) > 255) s = Array.from(s).slice(0, -1).join('');
+  return s;
+}
+
+/** Keeps at most `max` closed SOS (the most recently closed): a flood of closed alerts can't fill memory. */
+export function trimClosed(store: Store, max: number) {
+  const closed = Object.values(store).filter((a) => a.kind === 'sos' && a.status === 'done');
+  if (closed.length <= max) return;
+  closed.sort((a, b) => a.updatedAt - b.updatedAt);
+  for (const a of closed.slice(0, closed.length - max)) delete store[a.id];
 }
 
 /** Drops expired records, returns true if anything was removed. */

@@ -3,7 +3,10 @@ package expo.modules.blemesh
 import android.annotation.SuppressLint
 import android.bluetooth.*
 import android.bluetooth.le.*
+import android.content.BroadcastReceiver
 import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
 import android.os.Build
 import android.os.ParcelUuid
 import expo.modules.kotlin.modules.Module
@@ -66,6 +69,19 @@ class BleMeshModule : Module() {
   private val watchdog = android.os.Handler(android.os.Looper.getMainLooper())
   private val inbox = LinkedHashMap<String, Partial>() // insertion order = age; guarded by synchronized(inbox)
   private var msgId = 0
+  private var meshName: String? = null // set while the mesh should run: Bluetooth coming back restarts it
+
+  // Bluetooth turned off (or airplane mode) kills the scan, advertising, GATT server and every link without a
+  // word: tear everything down (JS hears onPeerLost) and start again when it's back on.
+  private val btState = object : BroadcastReceiver() {
+    override fun onReceive(c: Context, i: Intent) {
+      when (i.getIntExtra(BluetoothAdapter.EXTRA_STATE, -1)) {
+        BluetoothAdapter.STATE_TURNING_OFF, BluetoothAdapter.STATE_OFF -> teardown()
+        BluetoothAdapter.STATE_ON -> meshName?.let { n -> runCatching { start(n) } }
+      }
+    }
+  }
+  private var btWatched = false
 
   override fun definition() = ModuleDefinition {
     Name("BleMesh")
@@ -84,6 +100,8 @@ class BleMeshModule : Module() {
   }
 
   private fun start(name: String) {
+    meshName = name
+    if (!btWatched) { ctx.registerReceiver(btState, IntentFilter(BluetoothAdapter.ACTION_STATE_CHANGED)); btWatched = true }
     val adapter = manager.adapter ?: throw Exception("Bluetooth indisponible")
     if (!adapter.isEnabled) throw Exception("Active le Bluetooth")
     if (server == null) {
@@ -118,6 +136,7 @@ class BleMeshModule : Module() {
       scan.build(),
       scanCallback,
     )
+    watchdog.post { rotate() } // alerts still on air before Bluetooth went off
   }
 
   private fun hexBytes(h: String) = ByteArray(h.length / 2) { h.substring(it * 2, it * 2 + 2).toInt(16).toByte() }
@@ -129,13 +148,22 @@ class BleMeshModule : Module() {
   }
 
   private fun stop() {
+    meshName = null
+    if (btWatched) { runCatching { ctx.unregisterReceiver(btState) }; btWatched = false }
+    teardown()
+  }
+
+  /** Everything off; links reported lost so the JS side forgets them. The broadcast rotation is kept: it
+   *  restarts by itself (rotate) once Bluetooth is back. */
+  private fun teardown() {
     val adapter = manager.adapter ?: return
     runCatching { adapter.bluetoothLeScanner?.stopScan(scanCallback) }
     runCatching { adapter.bluetoothLeAdvertiser?.stopAdvertising(advertiseCallback) }
     runCatching { adapter.bluetoothLeAdvertiser?.stopAdvertisingSet(advSetCallback) }
-    watchdog.post { advs.clear(); advSet = null; watchdog.removeCallbacks(rotator) }
-    links.values.forEach { it.failAll(); runCatching { it.gatt.close() } }
+    watchdog.post { if (meshName == null) advs.clear(); advSet = null; advStarting = false; watchdog.removeCallbacks(rotator) }
+    val lost = links.toMap()
     links.clear()
+    lost.forEach { (addr, l) -> l.failAll(); runCatching { l.gatt.close() }; if (l.char != null) sendEvent("onPeerLost", mapOf("peerId" to addr)) }
     runCatching { server?.close() }
     server = null
   }

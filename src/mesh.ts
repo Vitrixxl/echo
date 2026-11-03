@@ -12,7 +12,7 @@ import * as Nearby from 'expo-nearby-connections';
 import { useEffect, useRef, useState } from 'react';
 import { AppState, PermissionsAndroid, Platform } from 'react-native';
 import BleMesh from '../modules/ble-mesh';
-import { digest, hashSecret, merge, missingFrom, prune, type Alert, type Store } from './alerts';
+import { digest, fitNote, hashSecret, isValid, merge, missingFrom, prune, trimClosed, type Alert, type Store } from './alerts';
 import { decode, encodeDigest, encodeRecords } from './codec';
 import { Outbox } from './outbox';
 
@@ -178,18 +178,21 @@ export function useMesh() {
       if (data.length > MAX_PER_PAYLOAD) return;
       const known = new Set(Object.keys(store.current));
       let sos = 0, medics = 0;
-      for (const a of Object.values(store.current)) a.kind === 'sos' ? sos++ : medics++;
-      // Updates to records we hold always pass; new ones only while there is room.
+      for (const a of Object.values(store.current)) a.kind === 'medic' ? medics++ : a.status !== 'done' && sos++;
+      // Updates to records we hold always pass; new ones only while there is room. Only open alerts count:
+      // closed ones never block a new alert (they're trimmed below instead).
       const room = data.filter((r: any) => {
         if (!r || typeof r.id !== 'string' || known.has(r.id)) return true;
-        return r.kind === 'sos' ? sos++ < MAX_SOS : medics++ < MAX_MEDICS;
+        return r.kind === 'medic' ? medics++ < MAX_MEDICS : r.status === 'done' || sos++ < MAX_SOS;
       });
       // Remember that the sender has these: never send them back to it. Bluetooth replies arrive from another
       // address than our link to that phone, so it's found by the mesh name carried in the message.
       const from = [peerId, ...(msg.from ? [...peers.current].filter((q) => names.get(q) === msg.from) : [])];
-      for (const q of from) if (peers.current.has(q)) outbox.has(q, data);
+      const valid = data.filter((r) => isValid(r)); // forged versions mustn't stop us sending the real one
+      for (const q of from) if (peers.current.has(q)) outbox.has(q, valid);
       const changed = merge(store.current, room);
       if (!changed.length) return;
+      trimClosed(store.current, MAX_SOS);
       broadcast(changed, peerId);
       shout(changed);
       commit(changed);
@@ -201,7 +204,7 @@ export function useMesh() {
     let discovering = false;
 
     const subs = [
-      BleMesh.addListener('onPeer', ({ peerId, name }) => link(BLE + peerId, name)),
+      BleMesh.addListener('onPeer', ({ peerId, name }) => { setError(null); link(BLE + peerId, name); }), // Bluetooth back on
       BleMesh.addListener('onPeerLost', ({ peerId }) => unlink(BLE + peerId)),
       BleMesh.addListener('onText', ({ peerId, text }) => receive(peerId === 'adv' ? 'adv' : BLE + peerId, text)),
       Nearby.onPeerFound(({ peerId, name }) => {
@@ -287,7 +290,7 @@ export function useMesh() {
       return next;
     });
     publish({
-      id, kind: 'sos', lat, lon, note: note.slice(0, 200), status: 'need', createdAt: now, updatedAt: now,
+      id, kind: 'sos', lat, lon, note: fitNote(note), status: 'need', createdAt: now, updatedAt: now,
       key: hashSecret(secret), ...(by ? { by } : {}),
     });
   };

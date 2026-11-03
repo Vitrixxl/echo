@@ -188,6 +188,13 @@ public class BleMeshModule: Module {
 
     // ---- Sending side (GATT client) ----
     func centralManagerDidUpdateState(_ c: CBCentralManager) {
+      if c.state != .poweredOn, let m = m, !m.links.isEmpty {
+        // Bluetooth off: CoreBluetooth drops every connection without a disconnect callback. Forget them, or
+        // they'd fill the link slots and hold their sends forever.
+        let lost = m.links
+        m.links.removeAll()
+        for (id, link) in lost { link.failAll(); if link.char != nil { m.sendEvent("onPeerLost", ["peerId": id.uuidString]) } }
+      }
       if c.state == .poweredOn {
         // Battery: no duplicate reports; a dropped link restarts the scan to rediscover the peer.
         // Duplicates on: broadcast alerts rotate in the same advertising (iOS ignores it in the background anyway).
