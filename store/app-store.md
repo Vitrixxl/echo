@@ -80,7 +80,7 @@ HTTPS standard, hachage SHA-256 et vérification de signature des mises à jour 
 
 ## Notes pour l'examen (App Review)
 
-À coller dans « Notes » (App Review) et dans « Test Information » (TestFlight). Remplacer le lien de la vidéo.
+À coller dans « Notes » (App Review) et dans « Test Information » (TestFlight).
 
 > Brancard is a free, non-commercial coordination tool for volunteer first-aiders ("street medics") at public gatherings in France. It is not a healthcare or medical service: no diagnosis, no medical advice, no health records. It is NOT an emergency service and says so in the app (role screen and alert confirmation): users are told to call 15 / 112 for life-threatening emergencies, with a one-tap call to 112. There is no account, no login, no ads, no analytics.
 >
@@ -89,10 +89,10 @@ HTTPS standard, hachage SHA-256 et vérification de signature des mises à jour 
 > Testing with ONE device (no demo account or demo mode needed):
 > 1. First launch: search "Paris" (city search is limited to France) and download its map (internet needed once).
 > 2. Choose "Je ne suis pas medic". Because your real GPS position is outside France, LONG-PRESS anywhere on the Paris map to place an alert there, pick a preset detail (e.g. "Blessure"), tap "CONFIRMER L'ALERTE". The alert appears on the map and in the bottom card ("Ton alerte"); it can be cancelled.
-> 3. Tap the role pill (top left), confirm "Changer", choose "Je suis street medic", then "Je suis formé·e" (warning about training and continuous position sharing). Medics are asked for notification permission so new alerts can notify them. Your own alert stays labelled "Ton alerte"; as a medic you can mark it "Résolu". Going to someone else's alert ("J'y vais", walking route computed on the device) needs a second device: see the video.
+> 3. Tap the role pill (top left), confirm "Changer", choose "Je suis street medic", then "Je suis formé·e" (warning about training and continuous position sharing). Medics are asked for notification permission so new alerts can notify them. Your own alert stays labelled "Ton alerte"; as a medic you can mark it "Résolu". Going to someone else's alert ("J'y vais", walking route computed on the device) needs a second device.
 > 4. Location permission is optional: without it, alerts can still be placed by long-press.
 >
-> With TWO devices (video: <UNLISTED VIDEO URL>): alerts raised on one phone appear on the other within seconds with no internet (airplane mode + Bluetooth on). With the medic's iPhone locked, a new alert triggers a local notification.
+> With TWO devices: alerts raised on one phone appear on the other within seconds with no internet (airplane mode + Bluetooth on). With the medic's iPhone locked, a new alert triggers a local notification.
 >
 > Background modes: bluetooth-central and bluetooth-peripheral are used so a locked phone continues to receive and relay alerts from nearby phones (GATT server + client). Location is "When In Use" only; there is no background location on iOS.
 >
