@@ -12,7 +12,7 @@ import * as Nearby from 'expo-nearby-connections';
 import { useEffect, useRef, useState } from 'react';
 import { AppState, PermissionsAndroid, Platform } from 'react-native';
 import BleMesh from '../modules/ble-mesh';
-import { digest, fitNote, hashSecret, isValid, merge, missingFrom, prune, trimClosed, type Alert, type Store } from './alerts';
+import { digest, fitNote, hashSecret, merge, missingFrom, prune, trimClosed, type Alert, type Store } from './alerts';
 import { decode, encodeDigest, encodeRecords } from './codec';
 import { Outbox } from './outbox';
 
@@ -188,8 +188,7 @@ export function useMesh() {
       // Remember that the sender has these: never send them back to it. Bluetooth replies arrive from another
       // address than our link to that phone, so it's found by the mesh name carried in the message.
       const from = [peerId, ...(msg.from ? [...peers.current].filter((q) => names.get(q) === msg.from) : [])];
-      const valid = data.filter((r) => isValid(r)); // forged versions mustn't stop us sending the real one
-      for (const q of from) if (peers.current.has(q)) outbox.has(q, valid);
+      for (const q of from) if (peers.current.has(q)) outbox.has(q, data);
       const changed = merge(store.current, room);
       if (!changed.length) return;
       trimClosed(store.current, MAX_SOS);
