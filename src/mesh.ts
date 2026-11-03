@@ -13,6 +13,7 @@ import { useEffect, useRef, useState } from 'react';
 import { AppState, PermissionsAndroid, Platform } from 'react-native';
 import BleMesh from '../modules/ble-mesh';
 import { digest, hashSecret, merge, missingFrom, prune, type Alert, type Store } from './alerts';
+import { Outbox } from './outbox';
 
 const KEY = 'echo.records.v2'; // v2: SOS carry a key; records saved by older versions are not valid any more
 const MINE_KEY = 'echo.mine.v2'; // { id: secret } of SOS raised from this phone: the secret closes them
@@ -95,11 +96,11 @@ export function useMesh() {
         AsyncStorage.setItem(KEY, JSON.stringify(sos)).catch(() => {});
       }, 5000);
   };
-  const sendText = (peerId: string, text: string) =>
-    (peerId.startsWith(BLE) ? BleMesh.send(peerId.slice(BLE.length), text) : Nearby.sendText(peerId, text)).catch(() => {});
-  const send = (peerId: string, list: Alert[]) => {
-    for (let i = 0; i < list.length; i += CHUNK) sendText(peerId, JSON.stringify(list.slice(i, i + CHUNK)));
-  };
+  // Per neighbour: SOS first, latest version of each record, one message in flight (see outbox.ts).
+  const [outbox] = useState(() => new Outbox((peerId, text) =>
+    peerId.startsWith(BLE) ? BleMesh.send(peerId.slice(BLE.length), text) : Nearby.sendText(peerId, text), CHUNK));
+  const sendText = (peerId: string, text: string) => outbox.pushRaw(peerId, text);
+  const send = (peerId: string, list: Alert[]) => outbox.push(peerId, list);
   const broadcast = (list: Alert[], except?: string) => {
     for (const p of peers.current) if (p !== except) send(p, list);
   };
@@ -122,6 +123,7 @@ export function useMesh() {
     const answered = new Set<string>(); // peers whose digest we already answered on this link
     const unlink = (peerId: string) => {
       peers.current.delete(peerId);
+      outbox.drop(peerId);
       answered.delete(peerId);
       setPeerCount(peers.current.size);
     };

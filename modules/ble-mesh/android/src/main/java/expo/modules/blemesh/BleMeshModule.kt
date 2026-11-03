@@ -25,12 +25,26 @@ const val PENDING_MS = 15_000L
 
 class Partial(val parts: Array<ByteArray?>, val at: Long)
 
+const val MAX_LINKS = 7 // outgoing links; flooding only needs the crowd connected, more links just add traffic
+const val MIN_RSSI = -90 // weaker advertisers are at the edge of range: their links fail and churn
+const val WRITE_TIMEOUT_MS = 15_000L
+
+/** One chunk to write; the last chunk of a message carries the JS promise, resolved once it is written. */
+class Chunk(val bytes: ByteArray, val done: expo.modules.kotlin.Promise?)
+
 /** One outgoing link: we are GATT client, the peer is GATT server. Writes are serialized. */
 class Link(val gatt: BluetoothGatt) {
   var char: BluetoothGattCharacteristic? = null
   var mtu = 23
-  val queue = ArrayDeque<ByteArray>()
+  val queue = ArrayDeque<Chunk>()
+  var current: Chunk? = null
   var busy = false
+
+  /** Fails every message still waiting (link lost or write error): the JS side then resends elsewhere. */
+  fun failAll() {
+    val pending = synchronized(this) { val l = listOfNotNull(current?.done) + queue.mapNotNull { it.done }; queue.clear(); current = null; busy = false; l }
+    pending.forEach { it.reject("ERR_BLE_SEND", "Lien BLE perdu", null) }
+  }
 }
 
 @SuppressLint("MissingPermission")
@@ -40,6 +54,8 @@ class BleMeshModule : Module() {
   private var server: BluetoothGattServer? = null
   private val links = ConcurrentHashMap<String, Link>()
   private val lastTry = ConcurrentHashMap<String, Long>()
+  private val fails = ConcurrentHashMap<String, Int>() // failed connections per address, for backoff
+  private val watchdog = android.os.Handler(android.os.Looper.getMainLooper())
   private val inbox = LinkedHashMap<String, Partial>() // insertion order = age; guarded by synchronized(inbox)
   private var msgId = 0
 
@@ -48,7 +64,9 @@ class BleMeshModule : Module() {
     Events("onPeer", "onPeerLost", "onText")
     AsyncFunction("start") { start() }
     AsyncFunction("stop") { stop() }
-    AsyncFunction("send") { peerId: String, text: String -> send(peerId, text) }
+    // Resolves once the whole message is written to the peer: the JS outbox sends the next one only then, so
+    // it can put alerts first and drop outdated positions instead of piling them up here.
+    AsyncFunction("send") { peerId: String, text: String, promise: expo.modules.kotlin.Promise -> send(peerId, text, promise) }
     OnDestroy { stop() }
   }
 
@@ -86,23 +104,25 @@ class BleMeshModule : Module() {
     val adapter = manager.adapter ?: return
     runCatching { adapter.bluetoothLeScanner?.stopScan(scanCallback) }
     runCatching { adapter.bluetoothLeAdvertiser?.stopAdvertising(advertiseCallback) }
-    links.values.forEach { runCatching { it.gatt.close() } }
+    links.values.forEach { it.failAll(); runCatching { it.gatt.close() } }
     links.clear()
     runCatching { server?.close() }
     server = null
   }
 
-  private fun send(peerId: String, text: String) {
-    val link = links[peerId] ?: throw Exception("Pair BLE inconnu")
+  private fun send(peerId: String, text: String, promise: expo.modules.kotlin.Promise) {
+    val link = links[peerId] ?: return promise.reject("ERR_BLE_PEER", "Pair BLE inconnu", null)
     val bytes = text.toByteArray(Charsets.UTF_8)
     val size = link.mtu - 3 - HEADER // one ATT packet, so the peer never needs prepared writes
     val total = (bytes.size + size - 1) / size
     val id = (msgId++) and 0xFFFF
     synchronized(link) {
-      for (i in 0 until maxOf(total, 1)) {
+      val n = maxOf(total, 1)
+      for (i in 0 until n) {
         val part = bytes.copyOfRange(i * size, minOf(bytes.size, (i + 1) * size))
-        link.queue.addLast(ByteBuffer.allocate(HEADER + part.size)
-          .putShort(id.toShort()).putShort(i.toShort()).putShort(maxOf(total, 1).toShort()).put(part).array())
+        val b = ByteBuffer.allocate(HEADER + part.size)
+          .putShort(id.toShort()).putShort(i.toShort()).putShort(n.toShort()).put(part).array()
+        link.queue.addLast(Chunk(b, if (i == n - 1) promise else null))
       }
     }
     pump(link)
@@ -114,8 +134,10 @@ class BleMeshModule : Module() {
     synchronized(link) {
       if (link.busy) return
       char = link.char ?: return
-      chunk = link.queue.removeFirstOrNull() ?: return
+      val c = link.queue.removeFirstOrNull() ?: return
+      link.current = c
       link.busy = true
+      chunk = c.bytes
     }
     val type = BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
     val ok = if (Build.VERSION.SDK_INT >= 33) {
@@ -123,7 +145,10 @@ class BleMeshModule : Module() {
     } else {
       @Suppress("DEPRECATION") run { char.writeType = type; char.value = chunk; link.gatt.writeCharacteristic(char) }
     }
-    if (!ok) { synchronized(link) { link.queue.clear(); link.busy = false } }
+    if (!ok) { link.failAll(); return }
+    // A write that never completes (stack stall) would block this link forever: give up and drop it.
+    val sent = link.current
+    watchdog.postDelayed({ if (link.current === sent && sent != null) { link.failAll(); runCatching { link.gatt.disconnect() } } }, WRITE_TIMEOUT_MS)
   }
 
   // ---- Receiving side (GATT server) ----
@@ -182,7 +207,10 @@ class BleMeshModule : Module() {
     override fun onScanResult(callbackType: Int, result: ScanResult) {
       val addr = result.device.address
       val now = System.currentTimeMillis()
-      if (links.containsKey(addr) || now - (lastTry[addr] ?: 0) < 10_000) return
+      // Backoff 10 s, 20 s… up to ~5 min for addresses that keep failing; a cap on links; skip weak signals.
+      val wait = 10_000L shl minOf(fails[addr] ?: 0, 5)
+      if (links.containsKey(addr) || links.size >= MAX_LINKS || result.rssi < MIN_RSSI || now - (lastTry[addr] ?: 0) < wait) return
+      if (lastTry.size > 2000) lastTry.clear() // rotating addresses: don't grow forever
       lastTry[addr] = now
       val gatt = result.device.connectGatt(ctx, false, gattCallback, BluetoothDevice.TRANSPORT_LE) ?: return
       links[addr] = Link(gatt)
@@ -195,7 +223,10 @@ class BleMeshModule : Module() {
       if (newState == BluetoothProfile.STATE_CONNECTED && status == BluetoothGatt.GATT_SUCCESS) {
         gatt.requestMtu(517)
       } else if (newState == BluetoothProfile.STATE_DISCONNECTED || status != BluetoothGatt.GATT_SUCCESS) {
-        val wasReady = links.remove(addr)?.char != null
+        val link = links.remove(addr)
+        val wasReady = link?.char != null
+        link?.failAll()
+        if (!wasReady) fails[addr] = (fails[addr] ?: 0) + 1
         runCatching { gatt.close() }
         if (wasReady) sendEvent("onPeerLost", mapOf("peerId" to addr))
       }
@@ -211,15 +242,17 @@ class BleMeshModule : Module() {
       val char = gatt.getService(SERVICE)?.getCharacteristic(CHAR)
       if (char == null) { gatt.disconnect(); return }
       link.char = char
+      fails.remove(gatt.device.address)
+      // Idle links don't need fast connection events: saves battery on every link.
+      gatt.requestConnectionPriority(BluetoothGatt.CONNECTION_PRIORITY_LOW_POWER)
       sendEvent("onPeer", mapOf("peerId" to gatt.device.address))
     }
 
     override fun onCharacteristicWrite(gatt: BluetoothGatt, characteristic: BluetoothGattCharacteristic, status: Int) {
       val link = links[gatt.device.address] ?: return
-      synchronized(link) {
-        link.busy = false
-        if (status != BluetoothGatt.GATT_SUCCESS) link.queue.clear()
-      }
+      if (status != BluetoothGatt.GATT_SUCCESS) { link.failAll(); return }
+      val done = synchronized(link) { val d = link.current?.done; link.current = null; link.busy = false; d }
+      done?.resolve(null)
       pump(link)
     }
   }

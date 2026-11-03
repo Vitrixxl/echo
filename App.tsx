@@ -319,7 +319,8 @@ function MapScreen({ role, city, onSwitch }: { role: Role; city: City | null; on
     if (last) onPos(last);
     gps.current ??= await Location.watchPositionAsync(
       role === 'medic'
-        ? { accuracy: Location.Accuracy.High, distanceInterval: 10, timeInterval: 5000 }
+        // a fix every 20 s even standing still (heartbeat), every 3 s while heading to an alert (guidance)
+        ? { accuracy: Location.Accuracy.High, distanceInterval: 0, timeInterval: goingRef.current ? 3000 : 20_000 }
         : { accuracy: Location.Accuracy.Balanced, distanceInterval: 25, timeInterval: 15000 },
       onPos,
     );
@@ -356,12 +357,26 @@ function MapScreen({ role, city, onSwitch }: { role: Role; city: City | null; on
   const careRef = useRef(care);
   careRef.current = care;
   useEffect(() => setCare(null), [going]);
-  const lastPing = useRef(0);
+  // Guidance needs fast fixes, the rest of the time a slow GPS saves battery: switch when a trip starts or ends.
+  const tripping = !!going;
+  useEffect(() => {
+    if (role !== 'medic' || !gps.current) return;
+    stopGps();
+    startGps().catch(() => {});
+  }, [tripping]);
+  // Medic heartbeat (tuned with scripts/simulate-crowd.ts): when moved 20 m and 20 s passed, every 90 s otherwise,
+  // at once when the target or the on-site answer changes. Every heartbeat is relayed by every phone of the
+  // crowd, so fewer of them keep the radio free for alerts. Driven by GPS fixes, which keep coming with the
+  // screen off (the app's timers don't); the medic GPS reports every 20 s even standing still.
+  const lastPing = useRef({ at: 0, lat: 0, lon: 0 });
   const ping = (force = false) => {
     const p = posRef.current;
-    if (role !== 'medic' || !p || (!force && Date.now() - lastPing.current < 10_000)) return;
+    if (role !== 'medic' || !p) return;
     if (p.at && Date.now() - p.at > 120_000) return; // stale fix (indoors, GPS off): say nothing rather than lie
-    lastPing.current = Date.now();
+    const last = lastPing.current, dt = Date.now() - last.at;
+    const moved = distanceM(p.lat, p.lon, last.lat, last.lon);
+    if (!force && !(dt >= 20_000 && moved >= 20) && dt < 90_000) return;
+    lastPing.current = { at: Date.now(), lat: p.lat, lon: p.lon };
     mesh.pingMedic(p.lat, p.lon, goingRef.current, careRef.current);
   };
   useEffect(() => ping(), [pos]);

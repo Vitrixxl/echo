@@ -13,12 +13,28 @@ private let MAX_PENDING = 64
 private let PENDING_S: TimeInterval = 15
 
 /// One outgoing link: we are GATT client, the peer is GATT server. Writes are serialized.
+private let MAX_LINKS = 7 // same as Android: flooding only needs the crowd connected
+private let MIN_RSSI = -90
+private let WRITE_TIMEOUT: TimeInterval = 15
+
+/// One chunk to write; the last chunk of a message carries the JS promise, resolved once it is written.
+private struct Chunk { let data: Data; let done: Promise? }
+
+/// One outgoing link: we are GATT client, the peer is GATT server. Writes are serialized.
 private final class Link {
   let peripheral: CBPeripheral
   var char: CBCharacteristic?
-  var queue: [Data] = []
+  var queue: [Chunk] = []
+  var current: Chunk?
+  var writes = 0 // bumped on each write, so a stale timeout can tell the write it watched is done
   var busy = false
   init(_ p: CBPeripheral) { peripheral = p }
+
+  /// Fails every message still waiting (link lost or write error): the JS side then resends elsewhere.
+  func failAll() {
+    for p in ([current?.done] + queue.map { $0.done }).compactMap({ $0 }) { p.reject("ERR_BLE_SEND", "Lien BLE perdu") }
+    queue.removeAll(); current = nil; busy = false
+  }
 }
 
 public class BleMeshModule: Module {
@@ -27,6 +43,7 @@ public class BleMeshModule: Module {
   private var periph: CBPeripheralManager?
   private var links: [UUID: Link] = [:]
   private var lastTry: [UUID: Date] = [:]
+  private var fails: [UUID: Int] = [:] // failed connections per peripheral, for backoff
   private var inbox: [String: (parts: [Data?], at: Date)] = [:]
   private var msgId: UInt16 = 0
   private lazy var delegate = Delegate(self)
@@ -41,15 +58,16 @@ public class BleMeshModule: Module {
       }
     }
     AsyncFunction("stop") { self.q.async { self.stop() } }
-    AsyncFunction("send") { (peerId: String, text: String) in
-      self.q.async { self.send(peerId, text) }
+    // Resolves once the whole message is written: the JS outbox sends the next one only then.
+    AsyncFunction("send") { (peerId: String, text: String, promise: Promise) in
+      self.q.async { self.send(peerId, text, promise) }
     }
     OnDestroy { self.q.async { self.stop() } }
   }
 
   private func stop() {
     central?.stopScan()
-    links.values.forEach { central?.cancelPeripheralConnection($0.peripheral) }
+    links.values.forEach { $0.failAll(); central?.cancelPeripheralConnection($0.peripheral) }
     links.removeAll()
     periph?.stopAdvertising()
     periph?.removeAllServices()
@@ -57,8 +75,8 @@ public class BleMeshModule: Module {
     periph = nil
   }
 
-  fileprivate func send(_ peerId: String, _ text: String) {
-    guard let id = UUID(uuidString: peerId), let link = links[id] else { return }
+  fileprivate func send(_ peerId: String, _ text: String, _ promise: Promise) {
+    guard let id = UUID(uuidString: peerId), let link = links[id] else { promise.reject("ERR_BLE_PEER", "Pair BLE inconnu"); return }
     let bytes = Data(text.utf8)
     // One ATT packet per chunk, so the peer never needs prepared (long) writes.
     let size = max(20, link.peripheral.maximumWriteValueLength(for: .withoutResponse)) - HEADER
@@ -68,7 +86,7 @@ public class BleMeshModule: Module {
       var chunk = Data()
       for v in [mid, UInt16(i), UInt16(total)] { chunk.append(UInt8(v >> 8)); chunk.append(UInt8(v & 0xFF)) }
       chunk.append(bytes.subdata(in: (i * size)..<min(bytes.count, (i + 1) * size)))
-      link.queue.append(chunk)
+      link.queue.append(Chunk(data: chunk, done: i == total - 1 ? promise : nil))
     }
     pump(link)
   }
@@ -76,7 +94,17 @@ public class BleMeshModule: Module {
   fileprivate func pump(_ link: Link) {
     guard !link.busy, let char = link.char, !link.queue.isEmpty else { return }
     link.busy = true
-    link.peripheral.writeValue(link.queue.removeFirst(), for: char, type: .withResponse)
+    let c = link.queue.removeFirst()
+    link.current = c
+    link.writes += 1
+    let n = link.writes
+    link.peripheral.writeValue(c.data, for: char, type: .withResponse)
+    // A write that never completes would block this link forever: give up and drop it.
+    q.asyncAfter(deadline: .now() + WRITE_TIMEOUT) { [weak self] in
+      guard link.busy, link.writes == n else { return }
+      link.failAll()
+      self?.central?.cancelPeripheralConnection(link.peripheral)
+    }
   }
 
   fileprivate func receive(from: String, _ data: Data) {
@@ -138,8 +166,11 @@ public class BleMeshModule: Module {
     }
 
     func centralManager(_ c: CBCentralManager, didDiscover p: CBPeripheral, advertisementData: [String: Any], rssi: NSNumber) {
-      guard let m = m, m.links[p.identifier] == nil,
-            Date().timeIntervalSince(m.lastTry[p.identifier] ?? .distantPast) > 3 else { return }
+      // Backoff 10 s, 20 s… up to ~5 min for peripherals that keep failing; a cap on links; skip weak signals.
+      let wait = 10.0 * Double(1 << min(m?.fails[p.identifier] ?? 0, 5))
+      guard let m = m, m.links[p.identifier] == nil, m.links.count < MAX_LINKS, rssi.intValue >= MIN_RSSI || rssi.intValue == 127,
+            Date().timeIntervalSince(m.lastTry[p.identifier] ?? .distantPast) > wait else { return }
+      if m.lastTry.count > 2000 { m.lastTry.removeAll() }
       m.lastTry[p.identifier] = Date()
       m.links[p.identifier] = Link(p) // strong ref, CoreBluetooth drops unreferenced peripherals
       p.delegate = self
@@ -150,6 +181,7 @@ public class BleMeshModule: Module {
 
     func centralManager(_ c: CBCentralManager, didFailToConnect p: CBPeripheral, error: Error?) {
       m?.links[p.identifier] = nil
+      m?.fails[p.identifier, default: 0] += 1
       rescan(c)
     }
 
@@ -160,6 +192,8 @@ public class BleMeshModule: Module {
 
     func centralManager(_ c: CBCentralManager, didDisconnectPeripheral p: CBPeripheral, error: Error?) {
       guard let m = m, let link = m.links.removeValue(forKey: p.identifier) else { return }
+      link.failAll()
+      if link.char == nil { m.fails[p.identifier, default: 0] += 1 }
       rescan(c)
       if link.char != nil { m.sendEvent("onPeerLost", ["peerId": p.identifier.uuidString]) }
     }
@@ -173,13 +207,17 @@ public class BleMeshModule: Module {
       guard let m = m, let link = m.links[p.identifier],
             let char = service.characteristics?.first(where: { $0.uuid == CHAR }) else { m?.central?.cancelPeripheralConnection(p); return }
       link.char = char
+      m.fails[p.identifier] = nil
       m.sendEvent("onPeer", ["peerId": p.identifier.uuidString])
     }
 
     func peripheral(_ p: CBPeripheral, didWriteValueFor characteristic: CBCharacteristic, error: Error?) {
       guard let m = m, let link = m.links[p.identifier] else { return }
+      if error != nil { link.failAll(); return }
+      let done = link.current?.done
+      link.current = nil
       link.busy = false
-      if error != nil { link.queue.removeAll() }
+      done?.resolve(nil)
       m.pump(link)
     }
   }
