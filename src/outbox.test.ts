@@ -50,3 +50,27 @@ test('protocol messages first; a dropped peer is forgotten; a failed send does n
   await new Promise((r) => setTimeout(r, 0));
   expect(calls).toBe(2);
 });
+
+test('A sent the alert to B and is linked to C; when B relays it to C and C to A, A sends it back to neither', async () => {
+  const radio = slowRadio();
+  const box = new Outbox(radio.transport, JSON.stringify);
+  const sos = rec('sos-1', 'sos');
+  box.push('B', [sos]); // A -> B
+  await radio.next();
+  box.has('C', [sos]); // C sends it to A (C got it from B)
+  box.push('B', [sos]); box.push('C', [sos]); // A's relay after receiving from C
+  expect(radio.sent.length).toBe(1);
+  expect(box.pending('B') + box.pending('C')).toBe(0);
+  box.push('C', [{ ...sos, status: 'done', updatedAt: 2 }]); // a newer version still goes
+  expect(radio.sent.length).toBe(2);
+});
+
+test('a queued record the neighbour gets elsewhere meanwhile is not sent', async () => {
+  const radio = slowRadio();
+  const box = new Outbox(radio.transport, JSON.stringify);
+  box.push('B', [rec('m-1', 'medic')]); // link busy
+  box.push('B', [rec('sos-1', 'sos')]);
+  box.has('B', [rec('sos-1', 'sos')]); // B sends it to us first
+  await radio.next();
+  expect(radio.sent.length).toBe(1);
+});

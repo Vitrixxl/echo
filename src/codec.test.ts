@@ -45,3 +45,9 @@ test('garbage decodes to nothing, never throws; decoded records still go through
   expect(merge({}, forged.records, now)).toEqual([]);
   expect(merge({}, (decode(encodeRecords([sos])) as { records: Alert[] }).records, now).length).toBe(1);
 });
+
+test('records carry the sender mesh name when given', () => {
+  const a = { id: 'ab12', kind: 'sos', lat: 1, lon: 2, note: '', status: 'need', createdAt: 5, updatedAt: 5 } as Alert;
+  expect(decode(encodeRecords([a], '0123456789ab'))).toEqual({ records: [a], from: '0123456789ab' });
+  expect(decode(encodeRecords([a]))).toEqual({ records: [a] });
+});

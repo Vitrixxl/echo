@@ -1,8 +1,8 @@
 // Compact binary wire format for the mesh, so an alert fits in a single Bluetooth packet (one radio round trip
 // per hop instead of two or three with JSON). Pure, tested with `bun test` (codec.test.ts).
 //
-//   message  = 1 byte type (1: records, 2: digest), then:
-//     records: 1 byte count, records…
+//   message  = 1 byte type (1: records, 2: digest, 3: records with the sender's mesh name), then:
+//     records: [6 bytes sender name if type 3], 1 byte count, records…
 //     digest:  2 bytes count, entries of [id, updatedAt (6 bytes ms), rank (1 byte)]
 //   record   = flags (2 bytes), id, lat, lon (int32, 1e-7 degree ≈ 1 cm), createdAt (6 bytes ms),
 //              updatedAt - createdAt (4 bytes ms), then only the optional fields present
@@ -127,9 +127,11 @@ function fromB64(s: string) {
 }
 
 // ---- public API ----
-export function encodeRecords(list: Alert[]) {
+/** from: the sender's mesh name (12 hex chars), so the receiver knows which neighbour already has these. */
+export function encodeRecords(list: Alert[], from?: string) {
   const w = new W();
-  w.u8(1); w.u8(Math.min(list.length, 255));
+  if (from) { w.u8(3); w.hex(from); } else w.u8(1);
+  w.u8(Math.min(list.length, 255));
   for (const a of list.slice(0, 255)) writeRecord(w, a);
   return toB64(w.b);
 }
@@ -142,14 +144,15 @@ export function encodeDigest(d: Digest) {
 }
 
 /** A received message: records, a digest, or null when malformed (dropped). */
-export function decode(text: string): { records: Alert[] } | { digest: Digest } | null {
+export function decode(text: string): { records: Alert[]; from?: string } | { digest: Digest } | null {
   try {
     const r = new R(fromB64(text));
     const type = r.u8();
-    if (type === 1) {
+    if (type === 1 || type === 3) {
+      const from = type === 3 ? r.hex(6) : undefined;
       const n = r.u8(), records: Alert[] = [];
       for (let k = 0; k < n; k++) records.push(readRecord(r));
-      return { records };
+      return from ? { records, from } : { records };
     }
     if (type === 2) {
       const n = r.u16(), digest: Digest = [];

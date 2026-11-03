@@ -18,6 +18,9 @@ import { Outbox } from './outbox';
 
 const KEY = 'echo.records.v2'; // v2: SOS carry a key; records saved by older versions are not valid any more
 const MINE_KEY = 'echo.mine.v2'; // { id: secret } of SOS raised from this phone: the secret closes them
+// Google Nearby / Multipeer is off for now: Bluetooth only (one radio, less battery, works across Android and iPhone).
+// Flip back on with an update if needed; everything else still handles Nearby links.
+const USE_NEARBY = false;
 const CHUNK = 40; // records per message when sending the whole store (Nearby payloads stay far below 32 KB)
 const DIGEST_MAX = 1000; // ~27 KB in base64: bigger digests don't fit one Nearby payload, send the records instead
 const RETRY_MS = 15_000;
@@ -106,11 +109,11 @@ export function useMesh() {
   };
   // Per neighbour: SOS first, latest version of each record, one message in flight (see outbox.ts).
   const [outbox] = useState(() => new Outbox((peerId, text, urgent) =>
-    peerId.startsWith(BLE) ? BleMesh.send(peerId.slice(BLE.length), text, urgent) : Nearby.sendText(peerId, text), encodeRecords));
+    peerId.startsWith(BLE) ? BleMesh.send(peerId.slice(BLE.length), text, urgent) : Nearby.sendText(peerId, text), (list) => encodeRecords(list, NAME)));
   // Alerts (new, closed) also go out in the Bluetooth advertising signal: every phone in range hears them at once,
   // linked or not. Each phone that learns one rebroadcasts it, so it floods without any link at all.
   const shout = (changed: Alert[]) => {
-    for (const a of changed) if (a.kind === 'sos') { try { BleMesh.broadcast(a.id, encodeRecords([a])); } catch {} }
+    for (const a of changed) if (a.kind === 'sos') { try { BleMesh.broadcast(a.id, encodeRecords([a], NAME)); } catch {} }
   };
   const sendText = (peerId: string, text: string) => outbox.pushRaw(peerId, text);
   const send = (peerId: string, list: Alert[]) => outbox.push(peerId, list);
@@ -180,6 +183,10 @@ export function useMesh() {
         if (!r || typeof r.id !== 'string' || known.has(r.id)) return true;
         return r.kind === 'sos' ? sos++ < MAX_SOS : medics++ < MAX_MEDICS;
       });
+      // Remember that the sender has these: never send them back to it. Bluetooth replies arrive from another
+      // address than our link to that phone, so it's found by the mesh name carried in the message.
+      const from = [peerId, ...(msg.from ? [...peers.current].filter((q) => names.get(q) === msg.from) : [])];
+      for (const q of from) if (peers.current.has(q)) outbox.has(q, data);
       const changed = merge(store.current, room);
       if (!changed.length) return;
       broadcast(changed, peerId);
@@ -214,7 +221,7 @@ export function useMesh() {
         return setError('Autorise « Appareils à proximité » pour relayer les alertes. Touche ici pour ouvrir les réglages.');
       const errs: string[] = [];
       await BleMesh.start(NAME).catch((e) => errs.push('Bluetooth : ' + short(e)));
-      try {
+      if (USE_NEARBY) try {
         if (Platform.OS === 'android' && !(await Nearby.isPlayServicesAvailable())) throw new Error('Google Play Services absent');
         await Nearby.stopDiscovery().catch(() => {});
         await Nearby.stopAdvertise().catch(() => {});
@@ -225,7 +232,7 @@ export function useMesh() {
       } catch (e) {
         errs.push('Wi-Fi direct : ' + short(e));
       }
-      setError(errs.length === 2 ? 'Mesh indisponible. ' + errs.join(' · ') : null);
+      setError(errs.length === (USE_NEARBY ? 2 : 1) ? 'Mesh indisponible. ' + errs.join(' · ') : null);
     };
 
     (async () => {

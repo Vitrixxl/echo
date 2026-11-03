@@ -9,13 +9,21 @@
 //  - each record waits once per neighbour, in its latest version: a medic who moved 5 times while the link was
 //    busy costs one send, not five;
 //  - the next message leaves only when the transport says the previous one is written (no timers, so it keeps
-//    going with the screen off, when the app's timers are frozen).
+//    going with the screen off, when the app's timers are frozen);
+//  - nothing goes to a neighbour that already has it: what it sent us, and what we sent it, are remembered per
+//    neighbour (A sent the alert to B; when C relays it to A, A doesn't send it back to B, nor to C). Checked
+//    again just before sending, since the neighbour may have got it from someone else meanwhile.
 import type { Alert } from './alerts';
+
+const RANK = { need: 0, taken: 1, done: 2 } as const;
+/** A record's version: a later update, or the same instant with a further status, is newer. */
+const version = (a: Alert) => a.updatedAt * 4 + RANK[a.status];
 
 export type Transport = (peer: string, text: string, urgent: boolean) => Promise<unknown>;
 
 export class Outbox {
   private wait = new Map<string, { raw: string[]; recs: Map<string, Alert>; busy: boolean }>();
+  private known = new Map<string, Map<string, number>>(); // neighbour -> record id -> version it has
   constructor(
     private transport: Transport,
     private encode: (list: Alert[]) => string = JSON.stringify,
@@ -28,10 +36,22 @@ export class Outbox {
     return q;
   }
 
-  /** Records for this neighbour; a newer version replaces the one still waiting. */
+  /** This neighbour has these records (it sent them to us, or we sent them to it). */
+  has(peer: string, list: Alert[]) {
+    let k = this.known.get(peer);
+    if (!k) this.known.set(peer, (k = new Map()));
+    for (const a of list) if ((k.get(a.id) ?? -1) < version(a)) k.set(a.id, version(a));
+    if (k.size > 2000) for (const id of [...k.keys()].slice(0, 500)) k.delete(id); // long-lived link: forget the oldest
+  }
+
+  private hasAlready(peer: string, a: Alert) {
+    return (this.known.get(peer)?.get(a.id) ?? -1) >= version(a);
+  }
+
+  /** Records for this neighbour, minus what it already has; a newer version replaces the one still waiting. */
   push(peer: string, list: Alert[]) {
     const q = this.q(peer);
-    for (const a of list) q.recs.set(a.id, a);
+    for (const a of list) if (!this.hasAlready(peer, a)) q.recs.set(a.id, a);
     this.pump(peer);
   }
 
@@ -41,9 +61,10 @@ export class Outbox {
     this.pump(peer);
   }
 
-  /** Neighbour gone: forget what it was owed. */
+  /** Neighbour gone: forget what it was owed and what it had. */
   drop(peer: string) {
     this.wait.delete(peer);
+    this.known.delete(peer);
   }
 
   pending(peer: string) {
@@ -56,6 +77,7 @@ export class Outbox {
     if (!q || q.busy) return;
     let text = q.raw.shift(), urgent = false;
     if (text === undefined) {
+      for (const [id, a] of q.recs) if (this.hasAlready(peer, a)) q.recs.delete(id); // got it elsewhere meanwhile
       if (!q.recs.size) return;
       const all = [...q.recs.values()];
       const sos = all.filter((a) => a.kind === 'sos');
@@ -70,6 +92,7 @@ export class Outbox {
         text = t;
       }
       for (const a of batch) q.recs.delete(a.id);
+      this.has(peer, batch);
       urgent = sos.length > 0;
     }
     q.busy = true;
