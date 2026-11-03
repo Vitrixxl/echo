@@ -16,7 +16,7 @@ function slowRadio() {
 
 test('one message at a time; SOS jump ahead of queued medic positions; positions coalesce', async () => {
   const radio = slowRadio();
-  const box = new Outbox(radio.transport, 2);
+  const box = new Outbox(radio.transport, JSON.stringify, 300); // ~2 records per message
   box.push('p', [rec('m-1', 'medic', 1)]); // leaves at once (link idle)
   for (let t = 2; t <= 6; t++) box.push('p', [rec('m-1', 'medic', t)]); // medic keeps moving while busy
   box.push('p', [rec('m-2', 'medic')]);
@@ -24,12 +24,11 @@ test('one message at a time; SOS jump ahead of queued medic positions; positions
   expect(radio.sent.length).toBe(1); // nothing else until the first send is written
   expect(box.pending('p')).toBe(3); // m-1 (latest only), m-2, sos-1
   await radio.next();
-  const second = JSON.parse(radio.sent[1]) as Alert[];
-  expect(second[0].id).toBe('sos-1'); // the alert goes first
-  expect(second.map((a) => a.id)).toEqual(['sos-1', 'm-1']);
-  expect(second[1].updatedAt).toBe(6); // only the latest position of m-1 was kept
+  expect(JSON.parse(radio.sent[1]).map((a: Alert) => a.id)).toEqual(['sos-1']); // the alert first, alone
   await radio.next();
-  expect(JSON.parse(radio.sent[2]).map((a: Alert) => a.id)).toEqual(['m-2']);
+  const third = JSON.parse(radio.sent[2]) as Alert[];
+  expect(third.map((a) => a.id)).toEqual(['m-1', 'm-2']); // positions share a message
+  expect(third[0].updatedAt).toBe(6); // only the latest position of m-1 was kept
   await radio.next();
   expect(radio.sent.length).toBe(3);
 });

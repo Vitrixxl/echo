@@ -14,6 +14,7 @@
  * Measured: time for the SOS to reach 50 % / 90 % / 100 % of medics, and records queued per phone (load).
  */
 import { digest, hashSecret, merge, missingFrom, type Alert, type Store } from '../src/alerts';
+import { encodeRecords } from '../src/codec';
 
 type Strategy = {
   name: string;
@@ -24,27 +25,27 @@ type Strategy = {
   pingMoveM: number; // minimum move to send a moving heartbeat (m)
   longLinks: boolean; // keep one slot for a far neighbour (a "bridge" that speeds up crossing the crowd)
   rotate: number; // s: at the link cap, drop the oldest idle link this often to meet new neighbours (0 = never)
+  wire: 'json40' | 'compact'; // json40: JSON messages of up to 40 records; compact: binary, one packet, alerts alone
 };
 
 const STRATEGIES: Strategy[] = [
-  { name: 'app (nouvelle)', cap: 7, queue: 'priority', pingEvery: 20, pingKeepalive: 90, pingMoveM: 20, longLinks: false, rotate: 0 },
-  { name: 'actuel', cap: 7, queue: 'fifo', pingEvery: 10, pingKeepalive: 60, pingMoveM: 0, longLinks: false, rotate: 0 },
-  { name: 'priorité + pings 20 s', cap: 5, queue: 'priority', pingEvery: 20, pingKeepalive: 90, pingMoveM: 20, longLinks: false, rotate: 0 },
-  { name: '+ pont', cap: 5, queue: 'priority', pingEvery: 20, pingKeepalive: 90, pingMoveM: 20, longLinks: true, rotate: 0 },
-  { name: '+ pont + rotation 45 s', cap: 5, queue: 'priority', pingEvery: 20, pingKeepalive: 90, pingMoveM: 20, longLinks: true, rotate: 45 },
+  { name: 'avant (JSON, paquets de 40)', cap: 7, queue: 'priority', pingEvery: 20, pingKeepalive: 90, pingMoveM: 20, longLinks: false, rotate: 0, wire: 'json40' },
+  { name: 'compact, alerte seule', cap: 7, queue: 'priority', pingEvery: 20, pingKeepalive: 90, pingMoveM: 20, longLinks: false, rotate: 0, wire: 'compact' },
+  { name: 'première version (FIFO, pings 10 s)', cap: 7, queue: 'fifo', pingEvery: 10, pingKeepalive: 60, pingMoveM: 0, longLinks: false, rotate: 0, wire: 'json40' },
 ];
 
 type Scenario = { name: string; phones: number; medicShare: number; length: number; width: number; still: number; rate: number };
-// rate: records/s per link direction. 6 = BLE with write-with-response, half kept for overhead; 2 = congested radio
+// rate: Bluetooth packets/s per link direction (~180 bytes each, write with response): 12 typical, 4 congested
 const SCENARIOS: Scenario[] = [
-  { name: 'cortège 300 tél.', phones: 300, medicShare: 0.05, length: 800, width: 25, still: 0.1, rate: 6 },
-  { name: 'cortège dense 1000 tél.', phones: 1000, medicShare: 0.04, length: 1000, width: 30, still: 0.1, rate: 6 },
-  { name: 'dense + radio saturée, 10 % medics', phones: 1000, medicShare: 0.1, length: 1000, width: 30, still: 0.1, rate: 2 },
-  { name: 'peu installée 80 tél.', phones: 80, medicShare: 0.08, length: 800, width: 25, still: 0.1, rate: 6 },
+  { name: 'cortège 300 tél.', phones: 300, medicShare: 0.05, length: 800, width: 25, still: 0.1, rate: 12 },
+  { name: 'cortège dense 1000 tél.', phones: 1000, medicShare: 0.04, length: 1000, width: 30, still: 0.1, rate: 12 },
+  { name: 'dense + radio saturée, 10 % medics', phones: 1000, medicShare: 0.1, length: 1000, width: 30, still: 0.1, rate: 4 },
+  { name: 'peu installée 80 tél.', phones: 80, medicShare: 0.08, length: 800, width: 25, still: 0.1, rate: 12 },
 ];
 
 const RANGE = [15, 35];
-const DT = 0.5; // s per tick
+const DT = 0.05; // s per tick
+const PACKET = 176; // bytes per BLE packet (MTU 185 minus headers)
 const SOS_AT = 120; // s: let links and heartbeats settle first
 const END = 420;
 
@@ -61,7 +62,7 @@ type Phone = {
   store: Store; links: Map<number, Link>; pending: Map<number, number>; // peer -> time the connection completes
   lastPing: number; lastPingX: number; lastPingY: number; got: number; // time it got the SOS, -1 if not
 };
-type Link = { to: number; out: Alert[]; budget: number; range: number; long: boolean; since: number; used: number };
+type Link = { to: number; out: Alert[]; budget: number; range: number; long: boolean; since: number; used: number; fly: { recs: Alert[]; left: number } | null };
 
 function run(sc: Scenario, st: Strategy, seed: number) {
   const r = rng(seed);
@@ -97,8 +98,8 @@ function run(sc: Scenario, st: Strategy, seed: number) {
   };
   const link = (a: Phone, b: Phone, long: boolean) => {
     const range = pairRange(a.i, b.i);
-    a.links.set(b.i, { to: b.i, out: [], budget: 0, range, long, since: now, used: now });
-    b.links.set(a.i, { to: a.i, out: [], budget: 0, range, long, since: now, used: now });
+    a.links.set(b.i, { to: b.i, out: [], budget: 0, range, long, since: now, used: now, fly: null });
+    b.links.set(a.i, { to: a.i, out: [], budget: 0, range, long, since: now, used: now, fly: null });
     // connect-time sync: each side sends what the other lacks (digest exchange)
     enqueue(a, b.i, missingFrom(a.store, digest(b.store)));
     enqueue(b, a.i, missingFrom(b.store, digest(a.store)));
@@ -167,19 +168,42 @@ function run(sc: Scenario, st: Strategy, seed: number) {
       a.got = now;
       flood(a, [rec]);
     }
-    // transmit: each link direction sends up to RATE records/s
+    // transmit: a link writes one message at a time, packet by packet (`rate` packets/s); the next message is
+    // chosen only when the previous one is fully written, like the app's outbox.
+    // Deliveries land after every link has transmitted: a message can't be relayed again within the same step,
+    // and an idle link can't save up a burst (each packet costs 1/rate s of radio time).
+    const arrived: [Phone, number, Alert[]][] = [];
     for (const p of phones) for (const l of p.links.values()) {
-      l.budget = Math.min(l.budget + sc.rate * DT, sc.rate * 2);
-      while (l.budget >= 1 && l.out.length) {
-        const a = l.out.shift()!;
-        l.budget--; sent++; l.used = now;
-        if (phones[l.to].links.has(p.i)) receive(phones[l.to], p.i, [a]);
+      l.budget = Math.min(l.budget + sc.rate * DT, Math.max(1, sc.rate * DT));
+      while (l.budget >= 1) {
+        if (!l.fly) {
+          if (!l.out.length) break;
+          let batch: Alert[];
+          if (st.wire === 'json40') batch = l.out.splice(0, 40);
+          else {
+            const sos = l.out.filter((a) => a.kind === 'sos');
+            const pool = sos.length ? sos : l.out;
+            batch = [pool[0]];
+            for (const a of pool.slice(1)) { if (encodeRecords([...batch, a]).length > PACKET) break; batch.push(a); }
+            const ids = new Set(batch.map((a) => a.id));
+            l.out = l.out.filter((a) => !ids.has(a.id));
+          }
+          const size = st.wire === 'json40' ? JSON.stringify(batch).length : encodeRecords(batch).length;
+          l.fly = { recs: batch, left: Math.ceil((size + 6) / PACKET) };
+        }
+        l.budget--; l.fly.left--; l.used = now;
+        if (l.fly.left > 0) continue;
+        sent += l.fly.recs.length;
+        const recs = l.fly.recs;
+        l.fly = null;
+        if (phones[l.to].links.has(p.i)) arrived.push([phones[l.to], p.i, recs]);
       }
     }
+    for (const [q, from, recs] of arrived) receive(q, from, recs);
   }
   const t = medics.map((m) => (m.got < 0 ? Infinity : m.got - SOS_AT)).sort((a, b) => a - b);
   const pct = (q: number) => t[Math.min(t.length - 1, Math.floor(q * t.length))];
-  const fmt = (v: number) => (v === Infinity ? 'jamais' : v.toFixed(0) + ' s');
+  const fmt = (v: number) => (v === Infinity ? 'jamais' : v.toFixed(1) + ' s');
   const reached = t.filter((v) => v !== Infinity).length;
   const links = phones.reduce((s, p) => s + p.links.size, 0) / phones.length;
   return { p50: fmt(pct(0.5)), p90: fmt(pct(0.9)), reached: `${reached}/${medics.length}`, links: links.toFixed(1), peakQueue, perPhone: (sent / phones.length / END).toFixed(1) };

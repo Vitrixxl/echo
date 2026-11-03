@@ -42,11 +42,12 @@ const RANK: Record<Status, number> = { need: 0, taken: 1, done: 2 };
 // Phone clocks drift (no network for hours, wrong manual time): tolerate 10 min ahead. Beyond that it's broken or
 // forged to pin a record. SOS can't be pinned anyway (immutable once seen); a medic record for 10 min at most.
 export const MAX_FUTURE_MS = 10 * 60 * 1000;
-const HEX64 = /^[0-9a-f]{64}$/;
+const HEX64 = /^[0-9a-f]{64}$/; // the author's secret (32 bytes)
+const HEX32 = /^[0-9a-f]{32}$/; // its key: the first 16 bytes of its sha256 (128 bits: no one finds a secret for it)
 export const ON_SITE_M = 40; // a medic this close to an SOS counts as "sur place"
 const shortId = (s: unknown) => typeof s === 'string' && s.length > 0 && s.length <= 64;
 
-export const hashSecret = (secretHex: string) => bytesToHex(sha256(hexToBytes(secretHex)));
+export const hashSecret = (secretHex: string) => bytesToHex(sha256(hexToBytes(secretHex)).slice(0, 16));
 const onSiteClose = (a: any, sos: { lat: number; lon: number }) =>
   shortId(a.doneBy) && Number.isFinite(a.doneLat) && Number.isFinite(a.doneLon) &&
   distanceM(a.doneLat, a.doneLon, sos.lat, sos.lon) <= ON_SITE_M;
@@ -68,7 +69,7 @@ export function isValid(a: any, now = Date.now()): a is Alert {
     (a.state === undefined || a.state === 'care' || a.state === 'help') &&
     (a.by === undefined || shortId(a.by)) &&
     // SOS: always a key; closed only with the matching proof; never "taken"
-    (a.kind === 'medic' || (typeof a.key === 'string' && HEX64.test(a.key) &&
+    (a.kind === 'medic' || (typeof a.key === 'string' && HEX32.test(a.key) &&
       (a.status === 'need' || (a.status === 'done' && (opens(a.proof, a.key) || onSiteClose(a, a)))))) &&
     Number.isFinite(a.createdAt) && Number.isFinite(a.updatedAt) &&
     a.updatedAt >= a.createdAt &&

@@ -10,6 +10,7 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode
 import { ActivityIndicator, AppState, Image, BackHandler, Keyboard, KeyboardAvoidingView, Linking, Pressable, Platform, ScrollView, StyleSheet, Text, TextInput, useWindowDimensions, Vibration, View } from 'react-native';
 import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
 import Manif from './modules/manif';
+import { TAGS } from './src/codec';
 import { coverage, coverageAll, distanceM, ON_SITE_M, type Alert as MeshRecord } from './src/alerts';
 import { ensurePermissions, useMesh } from './src/mesh';
 import { MAP_STYLE } from './src/mapStyle';
@@ -44,7 +45,6 @@ const DIM = C.bg + 'D9';
 const FILL: Record<string, string> = { [C.red]: '#D93A40', [C.green]: '#24804F', [C.blue]: '#2563D6' };
 const fill = (c: string) => FILL[c] ?? c;
 const ink = (c: string) => (c === C.orange ? '#111' : '#fff');
-const TAGS = ['Blessure', 'Saignement', 'Gaz lacrymo', 'Malaise', 'Inconscient', 'Brûlure'];
 // App Store rule 1.2: text written by strangers needs reporting and blocking, impossible without accounts or a
 // server. So on iPhone there is no free text: only the preset tags are typed, and shown from other phones.
 const FREE_TEXT = Platform.OS !== 'ios';

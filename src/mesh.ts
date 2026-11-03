@@ -13,12 +13,13 @@ import { useEffect, useRef, useState } from 'react';
 import { AppState, PermissionsAndroid, Platform } from 'react-native';
 import BleMesh from '../modules/ble-mesh';
 import { digest, hashSecret, merge, missingFrom, prune, type Alert, type Store } from './alerts';
+import { decode, encodeDigest, encodeRecords } from './codec';
 import { Outbox } from './outbox';
 
 const KEY = 'echo.records.v2'; // v2: SOS carry a key; records saved by older versions are not valid any more
 const MINE_KEY = 'echo.mine.v2'; // { id: secret } of SOS raised from this phone: the secret closes them
-const CHUNK = 40; // records per payload, stays far below Nearby's 32 KB byte-payload limit
-const DIGEST_MAX = 600; // ~27 KB: bigger digests don't fit one Nearby payload, send the records instead
+const CHUNK = 40; // records per message when sending the whole store (Nearby payloads stay far below 32 KB)
+const DIGEST_MAX = 1000; // ~27 KB in base64: bigger digests don't fit one Nearby payload, send the records instead
 const RETRY_MS = 15_000;
 // A hostile phone can send anything: cap what one payload and the whole store may hold, so a flood of
 // fake records can't freeze the map or be relayed across the crowd. A real march has far fewer.
@@ -98,7 +99,7 @@ export function useMesh() {
   };
   // Per neighbour: SOS first, latest version of each record, one message in flight (see outbox.ts).
   const [outbox] = useState(() => new Outbox((peerId, text) =>
-    peerId.startsWith(BLE) ? BleMesh.send(peerId.slice(BLE.length), text) : Nearby.sendText(peerId, text), CHUNK));
+    peerId.startsWith(BLE) ? BleMesh.send(peerId.slice(BLE.length), text) : Nearby.sendText(peerId, text), encodeRecords));
   const sendText = (peerId: string, text: string) => outbox.pushRaw(peerId, text);
   const send = (peerId: string, list: Alert[]) => outbox.push(peerId, list);
   const broadcast = (list: Alert[], except?: string) => {
@@ -118,7 +119,7 @@ export function useMesh() {
       if (peerId.startsWith(BLE)) return send(peerId, all.filter((a) => a.kind === 'sos' || a.id === 'm-' + ME));
       const d = digest(store.current);
       if (d.length > DIGEST_MAX) send(peerId, all);
-      else sendText(peerId, JSON.stringify({ h: d }));
+      else sendText(peerId, encodeDigest(d));
     };
     const answered = new Set<string>(); // peers whose digest we already answered on this link
     const unlink = (peerId: string) => {
@@ -128,17 +129,18 @@ export function useMesh() {
       setPeerCount(peers.current.size);
     };
     const receive = (peerId: string, text: string) => {
-      let data: unknown;
-      try { data = JSON.parse(text); } catch { return; }
-      if (data && typeof data === 'object' && 'h' in data) {
-        // Once per link: an 8-byte digest must not make us resend the whole store over and over.
+      const msg = decode(text); // compact binary format (codec.ts); anything malformed decodes to null
+      if (!msg) return;
+      if ('digest' in msg) {
+        // Once per link: a tiny digest must not make us resend the whole store over and over.
         if (answered.has(peerId)) return;
         answered.add(peerId);
-        const list = missingFrom(store.current, (data as { h: unknown }).h);
+        const list = missingFrom(store.current, msg.digest);
         if (list.length) send(peerId, list);
         return;
       }
-      if (!Array.isArray(data) || data.length > MAX_PER_PAYLOAD) return;
+      const data = msg.records;
+      if (data.length > MAX_PER_PAYLOAD) return;
       const known = new Set(Object.keys(store.current));
       let sos = 0, medics = 0;
       for (const a of Object.values(store.current)) a.kind === 'sos' ? sos++ : medics++;
