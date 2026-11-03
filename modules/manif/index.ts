@@ -7,5 +7,7 @@ export default requireOptionalNativeModule<{
   setRelay(on: boolean): void;
   setOverLock(on: boolean): void;
   wake(title: string, body: string): void;
-  keepAlive(): void; // asks to be left out of battery optimisation (once: no-op when already granted)
+  keepAlive(): void;
+  alarmIssues(): ('notifications' | 'fullscreen' | 'dnd')[]; // what would keep a medic's alarm silent
+  openSettings(issue: string): void; // asks to be left out of battery optimisation (once: no-op when already granted)
 }>('Manif');

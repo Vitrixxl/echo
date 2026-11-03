@@ -122,8 +122,10 @@ export function useMesh() {
   // Alerts (new, closed) also go out in the Bluetooth advertising signal: every phone in range hears them at once,
   // linked or not. Each phone that learns one rebroadcasts it, so it floods without any link at all. Open alerts
   // stay on air (slowly) until closed: a medic arriving later in a crowd that has the alert hears it right away.
+  // No sender name in it: every phone then broadcasts the very same bytes, which receivers drop as repeats
+  // (with a name, each phone's copy would be new: hundreds of them per second in a dense crowd).
   const shout = (changed: Alert[]) => {
-    for (const a of changed) if (a.kind === 'sos') { try { BleMesh.broadcast(a.id, encodeRecords([a], NAME), a.status !== 'done'); } catch {} }
+    for (const a of changed) if (a.kind === 'sos') { try { BleMesh.broadcast(a.id, encodeRecords([a]), a.status !== 'done'); } catch {} }
   };
   const sendText = (peerId: string, text: string) => outbox.pushRaw(peerId, text);
   const send = (peerId: string, list: Alert[]) => outbox.push(peerId, list);

@@ -54,6 +54,29 @@ class ManifModule : Module() {
       }
     }
 
+    // What would keep a medic's alarm silent: notifications off, full-screen alerts not allowed (Android 14+
+    // can withdraw it), Do Not Disturb on.
+    Function("alarmIssues") {
+      val nm = ctx.getSystemService(NotificationManager::class.java)
+      listOfNotNull(
+        "notifications".takeIf { !nm.areNotificationsEnabled() },
+        "fullscreen".takeIf { Build.VERSION.SDK_INT >= 34 && !nm.canUseFullScreenIntent() },
+        "dnd".takeIf { Build.VERSION.SDK_INT >= 23 && nm.currentInterruptionFilter > NotificationManager.INTERRUPTION_FILTER_ALL },
+      )
+    }
+
+    // The settings screen that fixes one of those.
+    Function("openSettings") { issue: String ->
+      val pkg = android.net.Uri.parse("package:" + ctx.packageName)
+      val i = when (issue) {
+        "notifications" -> Intent(android.provider.Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(android.provider.Settings.EXTRA_APP_PACKAGE, ctx.packageName)
+        "fullscreen" -> if (Build.VERSION.SDK_INT >= 34) Intent(android.provider.Settings.ACTION_MANAGE_APP_USE_FULL_SCREEN_INTENT, pkg) else null
+        "dnd" -> Intent("android.settings.ZEN_MODE_SETTINGS")
+        else -> null
+      } ?: Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS, pkg)
+      runCatching { ctx.startActivity(i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
+    }
+
     // A full-screen notification: with the screen off the system turns it on and opens Brancard over the lock screen.
     Function("wake") { title: String, body: String ->
       val nm = ctx.getSystemService(NotificationManager::class.java)

@@ -430,8 +430,32 @@ function MapScreen({ role, city, onSwitch }: { role: Role; city: City | null; on
         lockscreenVisibility: Notifications.AndroidNotificationVisibility.PRIVATE, // details only once unlocked
       });
       await Notifications.requestPermissionsAsync();
+      checkAlarm();
     })().catch(() => {});
+    // Back from the settings screen we opened: check again (one issue fixed, maybe another left).
+    const app = AppState.addEventListener('change', (st) => { if (st === 'active' && sentToSettings.current) checkAlarm(); });
+    return () => app.remove();
   }, [role]);
+  // A medic whose alarm can't ring must know before the march, not when nobody comes.
+  const sentToSettings = useRef(false);
+  const checkAlarm = async () => {
+    sentToSettings.current = false;
+    const issues: string[] = Manif ? Manif.alarmIssues() : (await Notifications.getPermissionsAsync()).granted ? [] : ['notifications'];
+    const issue = issues[0];
+    if (!issue) return;
+    const text: Record<string, string> = {
+      notifications: "Les notifications de Brancard sont bloquées : une nouvelle alerte ne sonnera pas quand l'app est en arrière-plan.",
+      fullscreen: "Android n'autorise pas Brancard à allumer l'écran : une nouvelle alerte n'apparaîtra pas écran verrouillé.",
+      dnd: "Le mode Ne pas déranger est activé : une nouvelle alerte ne sonnera pas. Coupe-le pendant la manif.",
+    };
+    setDialog({
+      icon: 'notifications-off', tone: C.orange, title: 'Tes alertes risquent de ne pas sonner', body: text[issue],
+      actions: [{ label: 'Plus tard' }, {
+        label: 'Réglages', color: C.orange,
+        onPress: () => { sentToSettings.current = true; Manif ? Manif.openSettings(issue) : Linking.openSettings(); },
+      }],
+    });
+  };
   // App not in front: a full-screen alert that lights the screen up, like a call (Android); a notification
   // where that doesn't exist (iPhone).
   const alarm = (title: string, body: string) => {
@@ -587,26 +611,27 @@ function MapScreen({ role, city, onSwitch }: { role: Role; city: City | null; on
     const p = posRef.current;
     if (!p || !map.current || routing) return;
     setRouting(true);
-    const from: LngLat = [p.lon, p.lat], to: LngLat = [r.lon, r.lat];
-    const inBox = (b: number[], q: LngLat) => q[0] > b[0] + 0.0008 && q[0] < b[2] - 0.0008 && q[1] > b[1] + 0.0008 && q[1] < b[3] - 0.0008;
-    const s = streets.current;
-    let path = s && inBox(s.box, from) && inBox(s.box, to) ? shortestPath(s.graph, from, to) : null;
-    if (!path) {
-      const pad = 0.002; // ~200 m around both points so detours fit in the graph
-      const box: [number, number, number, number] = [Math.min(from[0], to[0]) - pad, Math.min(from[1], to[1]) - pad, Math.max(from[0], to[0]) + pad, Math.max(from[1], to[1]) + pad];
-      cam.current?.fitBounds(box, { padding: { top: insets.top + 70, bottom: 380, left: 30, right: 30 }, duration: 0 });
-      // Short first wait; only if the streets read so far don't connect the two points, wait for the rest.
-      path = shortestPath(await readStreets(box, 700), from, to) ?? shortestPath(await readStreets(box, 900), from, to);
-    }
-    const coords = path ?? [from, to];
-    setRoute({ to: r.id, coords, m: lengthM(coords), exact: !!path });
-    setRouting(false);
-    // "J'y vais": the whole route, framed between the direction block and the bottom panel.
-    if (zoomOnMe) {
-      let [w, s_, e, n] = [Infinity, Infinity, -Infinity, -Infinity];
-      for (const [x, y] of coords) { w = Math.min(w, x); e = Math.max(e, x); s_ = Math.min(s_, y); n = Math.max(n, y); }
-      cam.current?.fitBounds([w, s_, e, n], { padding: navPad, duration: 700 });
-    }
+    try { // an error here must not leave routing stuck on for the whole session
+      const from: LngLat = [p.lon, p.lat], to: LngLat = [r.lon, r.lat];
+      const inBox = (b: number[], q: LngLat) => q[0] > b[0] + 0.0008 && q[0] < b[2] - 0.0008 && q[1] > b[1] + 0.0008 && q[1] < b[3] - 0.0008;
+      const s = streets.current;
+      let path = s && inBox(s.box, from) && inBox(s.box, to) ? shortestPath(s.graph, from, to) : null;
+      if (!path) {
+        const pad = 0.002; // ~200 m around both points so detours fit in the graph
+        const box: [number, number, number, number] = [Math.min(from[0], to[0]) - pad, Math.min(from[1], to[1]) - pad, Math.max(from[0], to[0]) + pad, Math.max(from[1], to[1]) + pad];
+        cam.current?.fitBounds(box, { padding: { top: insets.top + 70, bottom: 380, left: 30, right: 30 }, duration: 0 });
+        // Short first wait; only if the streets read so far don't connect the two points, wait for the rest.
+        path = shortestPath(await readStreets(box, 700), from, to) ?? shortestPath(await readStreets(box, 900), from, to);
+      }
+      const coords = path ?? [from, to];
+      setRoute({ to: r.id, coords, m: lengthM(coords), exact: !!path });
+      // "J'y vais": the whole route, framed between the direction block and the bottom panel.
+      if (zoomOnMe) {
+        let [w, s_, e, n] = [Infinity, Infinity, -Infinity, -Infinity];
+        for (const [x, y] of coords) { w = Math.min(w, x); e = Math.max(e, x); s_ = Math.min(s_, y); n = Math.max(n, y); }
+        cam.current?.fitBounds([w, s_, e, n], { padding: navPad, duration: 700 });
+      }
+    } finally { setRouting(false); }
   };
 
   const closeSheet = useCallback(() => setSheet(null), []);
@@ -721,7 +746,11 @@ function MapScreen({ role, city, onSwitch }: { role: Role; city: City | null; on
 
       {/* Top status bar */}
       {!nav && <View style={[s.top, { top: insets.top + 8 }]} pointerEvents="box-none">
-        <Pressable style={({ pressed }) => [s.pill, pressed && s.pressed]} onPress={onSwitch} accessibilityLabel="Changer de rôle">
+        <Pressable style={({ pressed }) => [s.pill, pressed && s.pressed]} onPress={() => setDialog({ // one stray tap in a crowd must not stop the relay
+          icon: 'swap-horizontal', title: 'Changer de rôle ?',
+          body: "Le relais des alertes s'arrête tant que tu n'as pas choisi à nouveau." + (going ? ' Ton trajet en cours sera annulé.' : ''),
+          actions: [{ label: 'Annuler' }, { label: 'Changer', color: C.red, onPress: onSwitch }],
+        })} accessibilityLabel="Changer de rôle">
           <View style={[s.dot, { backgroundColor: role === 'medic' ? C.green : C.blue }]} />
           <Text style={s.pillText}>{role === 'medic' ? 'Medic' : 'Civil'}</Text>
         </Pressable>
