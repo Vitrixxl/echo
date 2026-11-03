@@ -13,7 +13,8 @@
     "production": {
       "autoIncrement": true,
       "ios": {
-        "image": "latest"
+        "image": "latest",
+        "credentialsSource": "local"
       }
     }
   },
