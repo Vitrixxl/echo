@@ -369,7 +369,7 @@ class BleMeshModule : Module() {
       val now = System.currentTimeMillis()
       // Backoff 10 s, 20 s… up to ~5 min for addresses that keep failing; a cap on links; skip weak signals.
       val wait = 10_000L shl minOf(fails[addr] ?: 0, 5)
-      if (links.containsKey(addr) || links.size >= MAX_LINKS || links.size + incoming.count { it !in links } >= MAX_CONNECTIONS || result.rssi < MIN_RSSI || now - (lastTry[addr] ?: 0) < wait) return
+      if (links.containsKey(addr) || links.size >= MAX_LINKS || links.size + incoming.count { !links.containsKey(it) } >= MAX_CONNECTIONS || result.rssi < MIN_RSSI || now - (lastTry[addr] ?: 0) < wait) return
       if (lastTry.size > 2000) lastTry.clear() // rotating addresses: don't grow forever
       lastTry[addr] = now
       val gatt = result.device.connectGatt(ctx, false, gattCallback, BluetoothDevice.TRANSPORT_LE) ?: return
