@@ -23,11 +23,11 @@ const boot = async () => {
 };
 const auth = { authorization: `Bearer ${TOKEN}` };
 
-test('counts installs, once per IP per hour', async () => {
+test('counts installs (a total, no IP kept)', async () => {
   const { s, url } = await boot();
   expect(await (await fetch(url + '/count')).json()).toEqual({ count: 0 });
   expect(await (await fetch(url + '/install', { method: 'POST' })).json()).toEqual({ count: 1 });
-  expect(await (await fetch(url + '/install', { method: 'POST' })).json()).toEqual({ count: 1 });
+  expect(await (await fetch(url + '/install', { method: 'POST' })).json()).toEqual({ count: 2 });
   s.stop();
 });
 

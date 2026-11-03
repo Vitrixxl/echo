@@ -4,23 +4,22 @@
 //   GET  /tracts                   A4 sheet of cards to print, cut and hand around: the browser builds it from one
 //                                  card (card.svg, from promo/make_flyer.py --card-svg) and prints it or saves a PDF
 //   GET  /confidentialite          privacy policy (linked from the app and the App Store listing)
-//   GET  /count, POST /install     install counter (one install per IP per hour, IPs only kept in memory)
+//   GET  /count, POST /install     install counter: a total, nothing else (the app posts once, on first launch)
 //   GET  /updates/manifest         expo-updates protocol 1: the signed manifest for the phone's runtime, or 204
 //   GET  /updates/assets/:sha256   update files
 //   PUT  /updates/assets/:sha256, PUT /updates, PUT /apk   uploads, `Authorization: Bearer $DEPLOY_TOKEN`
 // Manifests are signed on the developer's machine (scripts/deploy.ts); this server only relays them, so taking it
 // over is not enough to push code to phones.
-// Env: PORT=8787, DATA=./data, DEPLOY_TOKEN, TRUST_PROXY=1 behind Caddy.  `server --health` probes /count.
+// Env: PORT=8787, DATA=./data, DEPLOY_TOKEN.  `server --health` probes /count.
 //
 // RAM: a few threads on blocking I/O, files streamed from and to disk (uploads are hashed while they are
 // written, never held in memory), the pages and the card compiled into the binary.
 use sha2::{Digest, Sha256};
-use std::collections::HashMap;
 use std::fs::{self, File};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 use tiny_http::{Header, Method, Request, Response, Server, StatusCode};
 
 const PAGE: &str = include_str!("../page.html");
@@ -29,7 +28,6 @@ const PRIVACY: &str = include_str!("../privacy.html");
 const CARD: &str = include_str!("../card.svg");
 const BTN_ON: &str = r#"<a class="b android" href="/download"><svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M17.6 9.48l1.84-3.18a.38.38 0 0 0-.66-.38l-1.86 3.22a11.5 11.5 0 0 0-9.84 0L5.22 5.92a.38.38 0 0 0-.66.38L6.4 9.48A10.8 10.8 0 0 0 1 18h22a10.8 10.8 0 0 0-5.4-8.52zM7 15.25a1.25 1.25 0 1 1 0-2.5 1.25 1.25 0 0 1 0 2.5zm10 0a1.25 1.25 0 1 1 0-2.5 1.25 1.25 0 0 1 0 2.5z"/></svg> TÉLÉCHARGER POUR ANDROID</a"#;
 const BTN_OFF: &str = r#"<div class="b off" aria-disabled="true"><svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M17.6 9.48l1.84-3.18a.38.38 0 0 0-.66-.38l-1.86 3.22a11.5 11.5 0 0 0-9.84 0L5.22 5.92a.38.38 0 0 0-.66.38L6.4 9.48A10.8 10.8 0 0 0 1 18h22a10.8 10.8 0 0 0-5.4-8.52zM7 15.25a1.25 1.25 0 1 1 0-2.5 1.25 1.25 0 0 1 0 2.5zm10 0a1.25 1.25 0 1 1 0-2.5 1.25 1.25 0 0 1 0 2.5z"/></svg> ANDROID <small>bientôt</small></div"#;
-const HOUR: Duration = Duration::from_secs(3600);
 const MAX_UPDATE_JSON: u64 = 1 << 20; // a signed manifest is a few KB
 const MAX_UPLOAD: u64 = 200 << 20;
 const THREADS: usize = 16; // slow phones downloading the APK hold a thread each; 256 KB stacks, so cheap
@@ -37,9 +35,7 @@ const THREADS: usize = 16; // slow phones downloading the APK hold a thread each
 struct App {
     data: PathBuf,
     token: String,
-    trust_proxy: bool,
     count: Mutex<u64>,
-    seen: Mutex<HashMap<String, Instant>>,
 }
 
 type Res = Response<Box<dyn Read + Send>>;
@@ -161,24 +157,11 @@ impl App {
             (Method::Get, "/tracts.pdf") => respond(301, Vec::new(), &[("location", "/tracts")]), // links shared before
             (Method::Get, "/count") => json(200, serde_json::json!({ "count": *self.count.lock().unwrap() })),
             (Method::Post, "/install") => {
-                let ip = self
-                    .trust_proxy
-                    .then(|| get_header(&req, "x-forwarded-for").and_then(|v| v.split(',').next()).map(|s| s.trim().to_string()))
-                    .flatten()
-                    .filter(|s| !s.is_empty())
-                    .or_else(|| req.remote_addr().map(|a| a.ip().to_string()))
-                    .unwrap_or_else(|| "?".into());
-                let now = Instant::now();
-                let fresh = {
-                    let mut seen = self.seen.lock().unwrap();
-                    seen.retain(|_, at| now.duration_since(*at) < HOUR); // ponytail: O(n) per install, fine at protest scale
-                    seen.insert(ip, now).is_none()
-                };
+                // No IP kept, not even in memory: the app's own "installed" flag stops double counts.
+                // ponytail: anyone can inflate the total with repeated POSTs; it's a vanity number, nothing depends on it.
                 let mut count = self.count.lock().unwrap();
-                if fresh {
-                    *count += 1;
-                    self.save_count(*count);
-                }
+                *count += 1;
+                self.save_count(*count);
                 json(200, serde_json::json!({ "count": *count }))
             }
             (Method::Get, "/updates/manifest") => {
@@ -294,9 +277,7 @@ fn main() {
     let app = Arc::new(App {
         data,
         token: env("DEPLOY_TOKEN", ""),
-        trust_proxy: env("TRUST_PROXY", "") == "1",
         count: Mutex::new(count),
-        seen: Mutex::new(HashMap::new()),
     });
     let server = Arc::new(Server::http(format!("0.0.0.0:{port}")).expect("bind"));
     println!("brancard server on :{}", server.server_addr().to_ip().map_or(0, |a| a.port()));

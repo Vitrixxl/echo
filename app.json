@@ -10,15 +10,17 @@
       "supportsTablet": false,
       "bundleIdentifier": "fr.vitrixxl.brancard",
       "buildNumber": "1",
-      "config": {
-        "usesNonExemptEncryption": false
-      },
       "infoPlist": {
         "UIBackgroundModes": [
           "bluetooth-central",
           "bluetooth-peripheral"
         ],
-        "ITSAppUsesNonExemptEncryption": false
+        "ITSAppUsesNonExemptEncryption": false,
+        "UIRequiredDeviceCapabilities": [
+          "arm64",
+          "bluetooth-le"
+        ],
+        "CFBundleDevelopmentRegion": "fr"
       },
       "privacyManifests": {
         "NSPrivacyTracking": false,
@@ -88,13 +90,17 @@
         {
           "bonjourServicesName": "echo-alerte",
           "localNetworkUsagePermissionText": "Brancard relaie les alertes avec les téléphones proches, même sans réseau.",
-          "bluetoothUsagePermissionText": "Brancard utilise le Bluetooth pour relayer les alertes sans réseau."
+          "bluetoothUsagePermissionText": "Brancard utilise le Bluetooth pour recevoir et relayer les alertes entre téléphones proches, sans réseau, même écran verrouillé."
         }
       ],
       [
         "expo-location",
         {
-          "locationWhenInUsePermission": "Brancard utilise ta position pour placer les alertes et (si tu es medic) te montrer sur la carte."
+          "locationWhenInUsePermission": "Brancard utilise ta position pour placer ton alerte. Elle est envoyée aux téléphones proches qui ont l'app (en continu si tu es medic), jamais à un serveur.",
+          "locationAlwaysAndWhenInUsePermission": "Brancard n'utilise ta position que quand l'app est ouverte, pour placer les alertes et, si tu es medic, te montrer aux autres.",
+          "locationAlwaysPermission": "Brancard n'utilise ta position que quand l'app est ouverte, pour placer les alertes et, si tu es medic, te montrer aux autres.",
+          "locationFullAccuracyPermission": "Brancard a besoin de ta position précise pour que les medics trouvent la personne blessée.",
+          "motionUsagePermission": false
         }
       ],
       "@maplibre/maplibre-react-native"

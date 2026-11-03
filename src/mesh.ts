@@ -21,7 +21,7 @@ const ME_KEY = 'echo.me.v1'; // { id, at }: the medic id, kept across restarts f
 const ME_KEEP_MS = 12 * 60 * 60 * 1000;
 const MINE_KEY = 'echo.mine.v2'; // { id: secret } of SOS raised from this phone: the secret closes them
 // Google Nearby / Multipeer is off for now: Bluetooth only (one radio, less battery, works across Android and iPhone).
-// Flip back on with an update if needed; everything else still handles Nearby links.
+// Turn back on only in a new build (App Store: no new features over the air). Everything else still handles Nearby links.
 const USE_NEARBY = false;
 const CHUNK = 40; // records per message when sending the whole store (Nearby payloads stay far below 32 KB)
 const DIGEST_MAX = 1000; // ~27 KB in base64: bigger digests don't fit one Nearby payload, send the records instead

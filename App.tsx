@@ -231,7 +231,8 @@ function RoleScreen({ onPick }: { onPick: (r: Role) => void }) {
         body="Formation aux premiers secours requise. Ta position est visible par tout le monde." onPress={() => onPick('medic')} />
       <RoleCard icon="person" color={C.blue} title="Je ne suis pas medic"
         body="Tu peux appeler un medic. Ta position n'est partagée que si tu lances une alerte." onPress={() => onPick('civil')} />
-      <Pressable onPress={() => Linking.openURL(ORIGIN + '/confidentialite')} hitSlop={12} style={{ alignSelf: 'center', marginTop: 16 }}>
+      <NotEmergency style={{ marginTop: 16 }} />
+      <Pressable onPress={() => Linking.openURL(ORIGIN + '/confidentialite')} hitSlop={12} style={{ alignSelf: 'center', marginTop: 12 }}>
         <Text style={s.link}>Confidentialité</Text>
       </Pressable>
     </View>
@@ -268,6 +269,19 @@ function EntryScreen({ medic, onEnter, onLater }: { medic: boolean; onEnter: () 
       {/* the main action sits lowest, under the thumb */}
       <View style={{ flexDirection: 'row' }}><Btn label="J'entre en manif" color={C.red} onPress={onEnter} /></View>
     </View>
+  );
+}
+
+/** Brancard coordinates volunteers; it doesn't replace the emergency services. One tap calls 112. */
+function NotEmergency({ style }: { style?: any }) {
+  return (
+    <Pressable onPress={() => Linking.openURL('tel:112')} accessibilityRole="button" accessibilityLabel="Appeler le 112"
+      style={({ pressed }) => [{ flexDirection: 'row', alignItems: 'center', gap: 10 }, style, pressed && s.pressed]}>
+      <Ionicons name="call" size={16} color={C.muted} />
+      <Text style={[s.roleBody, { flex: 1, marginTop: 0, fontSize: 13, lineHeight: 18 }]}>
+        Brancard ne remplace pas les secours. Urgence vitale : <Text style={{ color: C.text, fontWeight: '700', textDecorationLine: 'underline' }}>appelle le 15 ou le 112</Text>.
+      </Text>
+    </Pressable>
   );
 }
 
@@ -920,8 +934,9 @@ function MapScreen({ role, city, onSwitch }: { role: Role; city: City | null; on
           </View>
           {FREE_TEXT && <TextInput value={note} onChangeText={setNote} maxLength={120} placeholder="Autre détail…"
             placeholderTextColor={C.muted} style={s.input} />}
+          <NotEmergency style={{ marginTop: 18 }} />
           <Pressable onPress={confirm} disabled={!target || locating}
-            style={({ pressed }) => [s.sos, { marginTop: 24 }, (!target || locating) && { opacity: 0.6 }, pressed && s.pressed]}
+            style={({ pressed }) => [s.sos, { marginTop: 12 }, (!target || locating) && { opacity: 0.6 }, pressed && s.pressed]}
             accessibilityRole="button" accessibilityLabel="Confirmer l'alerte">
             {locating ? <ActivityIndicator color="#fff" /> : <Ionicons name="checkmark-circle" size={28} color="#fff" />}
             <Text style={s.sosText}>{locating ? 'LOCALISATION…' : "CONFIRMER L'ALERTE"}</Text>
