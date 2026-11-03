@@ -1,0 +1,273 @@
+<!doctype html>
+<html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Brancard : le réseau d'un cortège, vue graphe</title>
+<style>
+  :root { color-scheme: dark light; }
+  body { margin: 0; font-family: var(--font-sans, system-ui, sans-serif); color: var(--foreground, #eee); }
+  .wrap { display: flex; flex-direction: column; gap: 10px; }
+  .bar { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; font-size: 13px; }
+  .bar label { display: flex; align-items: center; gap: 6px; color: var(--muted-foreground, #aaa); }
+  .bar output { color: var(--foreground, #eee); font-variant-numeric: tabular-nums; min-width: 2.6em; display: inline-block; }
+  button, select { font: inherit; font-size: 13px; padding: 6px 12px; border-radius: var(--radius, 8px); border: 1px solid var(--border, #333);
+           background: var(--secondary, #222); color: var(--secondary-foreground, #eee); cursor: pointer; }
+  select { padding: 4px 6px; }
+  button.alert { background: var(--destructive, #e5484d); color: var(--destructive-foreground, #fff); border-color: transparent; font-weight: 600; }
+  .stage { position: relative; }
+  canvas { width: 100%; height: 520px; display: block; border-radius: var(--radius, 8px); background: #111317; border: 1px solid var(--border, #2a2d34); cursor: grab; }
+  canvas.drag { cursor: grabbing; }
+  .tip { position: absolute; pointer-events: none; font-size: 12px; background: rgba(20,22,27,.92); color: #e8e8ea; border: 1px solid #2f333b;
+         border-radius: 6px; padding: 5px 8px; display: none; white-space: nowrap; }
+  .hint { position: absolute; left: 12px; bottom: 10px; font-size: 11px; color: rgba(214,216,224,.85); pointer-events: none; }
+  .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 8px; }
+  .stat { background: var(--card, #15171c); border: 1px solid var(--border, #2a2d34); border-radius: var(--radius, 8px); padding: 8px 10px; }
+  .stat b { display: block; font-size: 18px; font-variant-numeric: tabular-nums; }
+  .stat span { font-size: 12px; color: var(--muted-foreground, #aaa); }
+  .legend { display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: 12px; color: var(--muted-foreground, #aaa); }
+  .legend i { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 5px; vertical-align: -1px; }
+</style></head>
+<body><div class="wrap">
+  <div class="bar">
+    <button class="alert" id="sos">Lancer une alerte</button>
+    <button id="reset">Nouveau cortège</button>
+    <label>Téléphones <input id="n" type="range" min="100" max="2500" step="100" value="1200"><output id="nv"></output></label>
+    <label>Liens max <input id="cap" type="range" min="1" max="7" value="7"><output id="capv"></output></label>
+    <label><input id="adv" type="checkbox" checked> Diffusion dans le signal</label>
+    <label>Vitesse <select id="speed"><option value="0.25">×0,25</option><option value="1" selected>×1</option><option value="3">×3</option></select></label>
+  </div>
+  <div class="stage">
+    <canvas id="c"></canvas>
+    <div class="tip" id="tip"></div>
+    <div class="hint">Molette : zoom · glisser : déplacer · survol : voisins · clic sur un point : alerte depuis ce téléphone</div>
+  </div>
+  <div class="legend">
+    <span><i style="background:#8b919c"></i>Android</span><span><i style="background:#b6aef0"></i>iPhone</span>
+    <span><i style="background:#30a46c"></i>Medic</span><span><i style="background:#ff5a5f"></i>A reçu l'alerte</span>
+    <span>Taille du point = nombre de liens · groupes séparés = téléphones qui ne peuvent pas se joindre</span>
+  </div>
+  <div class="stats">
+    <div class="stat"><b id="sLinks">–</b><span>liens par téléphone</span></div>
+    <div class="stat"><b id="sComp">–</b><span>groupes séparés</span></div>
+    <div class="stat"><b id="sT">–</b><span>depuis l'alerte</span></div>
+    <div class="stat"><b id="sFirst">–</b><span>1er medic prévenu</span></div>
+    <div class="stat"><b id="sMed">–</b><span>medics prévenus</span></div>
+    <div class="stat"><b id="sAll">–</b><span>téléphones prévenus</span></div>
+  </div>
+</div>
+<script>
+// Graph view of a whole march (like Obsidian's graph): each point is a phone, each line a Bluetooth link.
+// The links come from the same field model as scripts/simulate-crowd.ts (a 2 km street, range 15-35 m,
+// setup 2-6 s, 25 % failures, a link cap, 12 packets/s, broadcast by Android phones with BLE 5), but the
+// drawing places phones by their links, with a force layout: tightly linked groups bunch together and
+// separated groups drift apart, which a map hides.
+const $ = (id) => document.getElementById(id);
+const cv = $('c'), ctx = cv.getContext('2d'), tip = $('tip');
+const L = 2000, Wm = 40, RANGE = [15, 35], RATE = 12, CELL = 35;
+let P = [], links = new Map(), adj = [], pending = [], packets = [], t = 0, sosAt = -1, firstMed = -1, comps = 0;
+let seed = 7;
+const rnd = () => ((seed = (seed * 1664525 + 1013904223) >>> 0) / 2 ** 32);
+const pairRange = (a, b) => RANGE[0] + (((a * 7919 + b * 104729) % 1000) / 1000) * (RANGE[1] - RANGE[0]);
+const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
+const key = (a, b) => (a < b ? a * 100000 + b : b * 100000 + a);
+let pend = [];
+
+function reset() {
+  seed = (Date.now() & 0xffff) + 1;
+  const n = +$('n').value;
+  P = Array.from({ length: n }, (_, i) => {
+    const ios = rnd() < 0.3, x = rnd() * L, y = 2 + rnd() * (Wm - 4);
+    // graph position starts from the street, folded into a square so the layout has room
+    return { i, x, y, v: rnd() < 0.1 ? 0 : 0.6 + rnd() * 0.5, ios, medic: rnd() < 0.05, adv: !ios && rnd() < 0.85,
+             got: -1, nextRing: 0, gx: (x / L - 0.5) * 900 + (rnd() - 0.5) * 40, gy: (y / Wm - 0.5) * 120 + (rnd() - 0.5) * 40, vx: 0, vy: 0, flash: 0 };
+  });
+  links = new Map(); adj = P.map(() => new Set()); pending = []; packets = []; t = 0; sosAt = -1; firstMed = -1;
+  pend = P.map(() => 0);
+}
+const addLink = (a, b) => { links.set(key(a, b), [a, b]); adj[a].add(b); adj[b].add(a); };
+const dropLink = (k, a, b) => { links.delete(k); adj[a].delete(b); adj[b].delete(a); };
+
+// --- field model (positions on the street) ---
+function geoGrid() {
+  const g = new Map();
+  for (const p of P) { const k = Math.floor(p.x / CELL) * 100 + Math.floor(p.y / CELL); (g.get(k) ?? g.set(k, []).get(k)).push(p); }
+  return g;
+}
+function near(g, p) {
+  const out = [], cx = Math.floor(p.x / CELL), cy = Math.floor(p.y / CELL);
+  for (let x = cx - 1; x <= cx + 1; x++) for (let y = cy - 1; y <= cy + 1; y++) for (const q of g.get(x * 100 + y) ?? []) if (q !== p) out.push(q);
+  return out;
+}
+function raise(p) {
+  for (const q of P) { q.got = -1; q.flash = 0; }
+  packets = []; sosAt = t; firstMed = -1;
+  deliver(p);
+}
+function deliver(p) {
+  if (p.got >= 0) return;
+  p.got = t; p.flash = 1;
+  if (p.medic && firstMed < 0) firstMed = t - sosAt;
+  for (const o of adj[p.i]) if (P[o].got < 0) packets.push({ from: p.i, to: o, t0: t, t1: t + 1 / RATE + 0.03 + rnd() * 0.05 });
+  if (p.adv && $('adv').checked) p.nextRing = t + rnd() * 0.15;
+}
+function step(dt, g) {
+  t += dt;
+  const cap = +$('cap').value;
+  for (const p of P) {
+    p.x += (p.v + (rnd() - 0.5) * 0.4) * dt; if (p.x > L) p.x -= L;
+    p.y = Math.min(Wm - 1, Math.max(1, p.y + (rnd() - 0.5) * 0.8 * dt));
+  }
+  for (const [k, [a, b]] of links) if (Math.abs(P[a].x - P[b].x) > L / 2 || dist(P[a], P[b]) > pairRange(a, b) * 1.2) dropLink(k, a, b);
+  for (const p of P) {
+    if (adj[p.i].size + pend[p.i] >= cap || rnd() > dt / 3) continue;
+    const cands = near(g, p).filter((q) => dist(p, q) < pairRange(p.i, q.i) && !adj[p.i].has(q.i) && adj[q.i].size + pend[q.i] < cap);
+    if (cands.length) { const q = cands[Math.floor(rnd() * cands.length)]; pending.push({ a: p.i, b: q.i, t1: t + 2 + rnd() * 4 }); pend[p.i]++; pend[q.i]++; }
+  }
+  const still = [];
+  for (const c of pending) {
+    if (t < c.t1) { still.push(c); continue; }
+    pend[c.a]--; pend[c.b]--;
+    const a = P[c.a], b = P[c.b];
+    if (rnd() > 0.25 && dist(a, b) < pairRange(a.i, b.i) && adj[a.i].size < cap && adj[b.i].size < cap && !adj[a.i].has(b.i)) {
+      addLink(a.i, b.i);
+      if (sosAt >= 0 && (a.got >= 0) !== (b.got >= 0)) { const [s, r] = a.got >= 0 ? [a, b] : [b, a]; packets.push({ from: s.i, to: r.i, t0: t, t1: t + 0.15 }); }
+    }
+  }
+  pending = still;
+  const left = [];
+  for (const pk of packets) {
+    if (t < pk.t1) { left.push(pk); continue; }
+    if (pk.adv || adj[pk.from]?.has(pk.to)) deliver(P[pk.to]);
+  }
+  packets = left;
+  if ($('adv').checked && sosAt >= 0) for (const p of P) {
+    if (!p.adv || p.got < 0 || t - p.got > 60 || t < p.nextRing) continue;
+    p.nextRing = t + 0.6;
+    for (const q of near(g, p)) if (q.got < 0 && dist(p, q) < pairRange(p.i, q.i)) packets.push({ from: p.i, to: q.i, t0: t, t1: t + 0.1 + rnd() * 0.2, adv: true });
+  }
+  for (const p of P) p.flash = Math.max(0, p.flash - dt * 0.6);
+}
+
+// --- force layout (graph positions) ---
+const GC = 40; // repulsion reach in graph units
+function layout() {
+  const n = P.length, g = new Map();
+  for (const p of P) { const k = Math.floor(p.gx / GC) * 4096 + Math.floor(p.gy / GC); (g.get(k) ?? g.set(k, []).get(k)).push(p); }
+  for (const p of P) {
+    let fx = -p.gx * 0.0009, fy = -p.gy * 0.0016; // gentle pull to the centre, flatter vertically
+    const cx = Math.floor(p.gx / GC), cy = Math.floor(p.gy / GC);
+    for (let x = cx - 1; x <= cx + 1; x++) for (let y = cy - 1; y <= cy + 1; y++) for (const q of g.get(x * 4096 + y) ?? []) {
+      if (q === p) continue;
+      const dx = p.gx - q.gx, dy = p.gy - q.gy, d2 = dx * dx + dy * dy + 0.01;
+      if (d2 < GC * GC) { const f = 18 / d2; fx += dx * f; fy += dy * f; }
+    }
+    for (const o of adj[p.i]) { const q = P[o], dx = q.gx - p.gx, dy = q.gy - p.gy, d = Math.hypot(dx, dy) + 0.01; const f = (d - 14) * 0.02 / d; fx += dx * f; fy += dy * f; }
+    p.vx = (p.vx + fx) * 0.82; p.vy = (p.vy + fy) * 0.82;
+  }
+  for (const p of P) { p.gx += Math.max(-4, Math.min(4, p.vx)); p.gy += Math.max(-4, Math.min(4, p.vy)); }
+}
+
+// --- view: zoom, pan, hover ---
+let zoom = 0.75, ox = 0, oy = 0, hover = null, drag = null;
+const toScreen = (p, w, h) => [w / 2 + (p.gx + ox) * zoom, h / 2 + (p.gy + oy) * zoom];
+function pick(mx, my) {
+  const w = cv.clientWidth, h = cv.clientHeight; let best = null, bd = 64;
+  for (const p of P) { const [x, y] = toScreen(p, w, h), d = (x - mx) ** 2 + (y - my) ** 2; if (d < bd) { bd = d; best = p; } }
+  return best;
+}
+cv.addEventListener('wheel', (e) => {
+  e.preventDefault();
+  const r = cv.getBoundingClientRect(), mx = e.clientX - r.left - cv.clientWidth / 2, my = e.clientY - r.top - cv.clientHeight / 2;
+  const z = Math.min(8, Math.max(0.2, zoom * Math.exp(-e.deltaY * 0.0015)));
+  ox += mx / z - mx / zoom; oy += my / z - my / zoom; zoom = z;
+}, { passive: false });
+cv.addEventListener('mousedown', (e) => { drag = { x: e.clientX, y: e.clientY, ox, oy, moved: false }; cv.classList.add('drag'); });
+window.addEventListener('mouseup', (e) => {
+  if (drag && !drag.moved) { const r = cv.getBoundingClientRect(), p = pick(e.clientX - r.left, e.clientY - r.top); if (p) raise(p); }
+  drag = null; cv.classList.remove('drag');
+});
+cv.addEventListener('mousemove', (e) => {
+  const r = cv.getBoundingClientRect(), mx = e.clientX - r.left, my = e.clientY - r.top;
+  if (drag) { const dx = e.clientX - drag.x, dy = e.clientY - drag.y; if (Math.abs(dx) + Math.abs(dy) > 3) drag.moved = true; ox = drag.ox + dx / zoom; oy = drag.oy + dy / zoom; }
+  hover = pick(mx, my);
+  if (hover) {
+    tip.style.display = 'block'; tip.style.left = mx + 14 + 'px'; tip.style.top = my + 10 + 'px';
+    tip.textContent = `${hover.medic ? 'Medic' : 'Civil'} · ${hover.ios ? 'iPhone' : 'Android'}${hover.adv ? ' (diffuse)' : ''} · ${adj[hover.i].size} lien${adj[hover.i].size > 1 ? 's' : ''} · ${Math.round(hover.x)} m du début`
+      + (hover.got >= 0 && sosAt >= 0 ? ` · alerte reçue en ${(hover.got - sosAt).toFixed(1)} s` : '');
+  } else tip.style.display = 'none';
+});
+cv.addEventListener('mouseleave', () => { hover = null; tip.style.display = 'none'; });
+
+function components() {
+  const seen = new Uint8Array(P.length); let c = 0;
+  for (const p of P) { if (seen[p.i]) continue; c++; const st = [p.i]; seen[p.i] = 1;
+    while (st.length) { const u = st.pop(); for (const v of adj[u]) if (!seen[v]) { seen[v] = 1; st.push(v); } } }
+  return c;
+}
+
+function draw() {
+  const dpr = window.devicePixelRatio || 1, w = cv.clientWidth, h = cv.clientHeight;
+  if (cv.width !== Math.round(w * dpr) || cv.height !== Math.round(h * dpr)) { cv.width = Math.round(w * dpr); cv.height = Math.round(h * dpr); }
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.fillStyle = '#111317'; ctx.fillRect(0, 0, w, h);
+  const hn = hover ? adj[hover.i] : null;
+  // edges
+  ctx.lineWidth = Math.max(0.4, 0.7 * Math.sqrt(zoom));
+  ctx.strokeStyle = hover ? 'rgba(120,128,140,0.12)' : 'rgba(120,128,140,0.28)';
+  ctx.beginPath();
+  for (const [a, b] of links.values()) { const [x1, y1] = toScreen(P[a], w, h), [x2, y2] = toScreen(P[b], w, h); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); }
+  ctx.stroke();
+  ctx.strokeStyle = 'rgba(255,90,95,0.45)'; ctx.beginPath();
+  for (const [a, b] of links.values()) if (P[a].got >= 0 && P[b].got >= 0) { const [x1, y1] = toScreen(P[a], w, h), [x2, y2] = toScreen(P[b], w, h); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); }
+  ctx.stroke();
+  if (hover) {
+    ctx.strokeStyle = 'rgba(190,180,255,0.9)'; ctx.lineWidth = 1.4; ctx.beginPath();
+    const [x1, y1] = toScreen(hover, w, h);
+    for (const o of hn) { const [x2, y2] = toScreen(P[o], w, h); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); }
+    ctx.stroke();
+  }
+  // packets in flight along links
+  ctx.fillStyle = '#ff5a5f';
+  for (const pk of packets) { if (pk.adv) continue; const a = P[pk.from], b = P[pk.to], k = Math.min(1, (t - pk.t0) / (pk.t1 - pk.t0));
+    const [x1, y1] = toScreen(a, w, h), [x2, y2] = toScreen(b, w, h); ctx.beginPath(); ctx.arc(x1 + (x2 - x1) * k, y1 + (y2 - y1) * k, 1.8, 0, 7); ctx.fill(); }
+  // nodes
+  for (const p of P) {
+    const [x, y] = toScreen(p, w, h);
+    if (x < -10 || y < -10 || x > w + 10 || y > h + 10) continue;
+    const r = (1.6 + Math.sqrt(adj[p.i].size) * 0.9) * Math.sqrt(zoom) * (p.medic ? 1.5 : 1);
+    const dim = hover && p !== hover && !hn.has(p.i);
+    if (p.flash > 0) { ctx.fillStyle = `rgba(255,90,95,${0.35 * p.flash})`; ctx.beginPath(); ctx.arc(x, y, r + 7 * p.flash, 0, 7); ctx.fill(); }
+    ctx.globalAlpha = dim ? 0.25 : 1;
+    ctx.fillStyle = p.got >= 0 ? '#ff5a5f' : p.medic ? '#30a46c' : p.ios ? '#b6aef0' : '#8b919c';
+    ctx.beginPath(); ctx.arc(x, y, r, 0, 7); ctx.fill();
+    if (p.medic) { ctx.strokeStyle = p.got >= 0 ? '#ffb3b5' : '#5fd49a'; ctx.lineWidth = 1.2; ctx.beginPath(); ctx.arc(x, y, r + 2, 0, 7); ctx.stroke(); }
+    ctx.globalAlpha = 1;
+  }
+  const n = P.length, med = P.filter((p) => p.medic), got = P.filter((p) => p.got >= 0);
+  $('sLinks').textContent = (2 * links.size / n).toFixed(1);
+  $('sComp').textContent = comps;
+  $('sT').textContent = sosAt < 0 ? '–' : (t - sosAt).toFixed(1) + ' s';
+  $('sFirst').textContent = firstMed < 0 ? '–' : firstMed.toFixed(1) + ' s';
+  $('sMed').textContent = sosAt < 0 ? '–' : `${med.filter((p) => p.got >= 0).length} / ${med.length}`;
+  $('sAll').textContent = sosAt < 0 ? '–' : Math.round(100 * got.length / n) + ' %';
+  $('nv').textContent = $('n').value; $('capv').textContent = $('cap').value;
+}
+
+let last = performance.now(), frameNo = 0;
+function frame(now) {
+  const dt = Math.min(0.1, (now - last) / 1000) * +$('speed').value; last = now;
+  const sub = Math.max(1, Math.ceil(dt / 0.05));
+  for (let k = 0; k < sub; k++) step(dt / sub, geoGrid());
+  layout(); layout();
+  if (frameNo++ % 15 === 0) comps = components();
+  draw(); requestAnimationFrame(frame);
+}
+function warm() { // 25 s of walking so links have formed, and a settled layout
+  for (let k = 0; k < 250; k++) step(0.1, geoGrid());
+  for (let k = 0; k < 220; k++) layout();
+  comps = components();
+}
+$('reset').onclick = () => { reset(); warm(); };
+$('n').onchange = () => { reset(); warm(); };
+$('sos').onclick = () => { const civ = P.filter((p) => !p.medic); raise(civ[Math.floor(rnd() * civ.length)]); };
+reset(); warm();
+requestAnimationFrame(frame);
+</script></body></html>

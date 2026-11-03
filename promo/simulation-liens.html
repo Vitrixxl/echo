@@ -1,0 +1,206 @@
+<!doctype html>
+<html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Brancard : comment les liens se créent</title>
+<style>
+  :root { color-scheme: dark light; }
+  body { margin: 0; font-family: var(--font-sans, system-ui, sans-serif); color: var(--foreground, #eee); }
+  .wrap { display: flex; flex-direction: column; gap: 10px; }
+  .bar { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; font-size: 13px; }
+  .bar label { display: flex; align-items: center; gap: 6px; color: var(--muted-foreground, #aaa); }
+  .bar output { color: var(--foreground, #eee); font-variant-numeric: tabular-nums; min-width: 2.2em; display: inline-block; }
+  button { font: inherit; font-size: 13px; padding: 6px 12px; border-radius: var(--radius, 8px); border: 1px solid var(--border, #333);
+           background: var(--secondary, #222); color: var(--secondary-foreground, #eee); cursor: pointer; }
+  button.alert { background: var(--destructive, #e5484d); color: var(--destructive-foreground, #fff); border-color: transparent; font-weight: 600; }
+  canvas { width: 100%; height: 300px; display: block; border-radius: var(--radius, 8px); background: var(--card, #15171c); border: 1px solid var(--border, #2a2d34); cursor: crosshair; }
+  .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 8px; }
+  .stat { background: var(--card, #15171c); border: 1px solid var(--border, #2a2d34); border-radius: var(--radius, 8px); padding: 8px 10px; }
+  .stat b { display: block; font-size: 18px; font-variant-numeric: tabular-nums; }
+  .stat span { font-size: 12px; color: var(--muted-foreground, #aaa); }
+  .legend { display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: 12px; color: var(--muted-foreground, #aaa); }
+  .legend i { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 5px; vertical-align: -1px; }
+  .legend i.l { width: 16px; height: 2px; border-radius: 0; vertical-align: 3px; }
+</style></head>
+<body><div class="wrap">
+  <div class="bar">
+    <button class="alert" id="sos">Lancer une alerte</button>
+    <button id="reset">Nouveau cortège</button>
+    <label>Téléphones <input id="n" type="range" min="30" max="500" step="10" value="220"><output id="nv"></output></label>
+    <label>Liens max <input id="cap" type="range" min="1" max="7" value="7"><output id="capv"></output></label>
+    <label><input id="adv" type="checkbox" checked> Diffusion dans le signal</label>
+    <label>Vitesse <select id="speed"><option value="0.25">×0,25</option><option value="1" selected>×1</option><option value="3">×3</option></select></label>
+  </div>
+  <canvas id="c"></canvas>
+  <div class="legend">
+    <span><i style="background:#8a8f98"></i>Android</span><span><i style="background:#c9c3f5"></i>iPhone</span>
+    <span><i style="background:#30a46c"></i>Medic</span><span><i style="background:#e5484d"></i>A reçu l'alerte</span>
+    <span><i class="l" style="background:#5d6470"></i>Lien établi</span><span><i class="l" style="background:#f5a524"></i>Connexion en cours</span>
+    <span><i class="l" style="background:#e5484d"></i>Alerte qui passe par un lien</span><span><i style="border:1px solid #e5484d;background:none"></i>Diffusion dans le signal</span>
+  </div>
+  <div class="stats">
+    <div class="stat"><b id="sLinks">–</b><span>liens par téléphone</span></div>
+    <div class="stat"><b id="sT">–</b><span>depuis l'alerte</span></div>
+    <div class="stat"><b id="sFirst">–</b><span>1er medic prévenu</span></div>
+    <div class="stat"><b id="sMed">–</b><span>medics prévenus</span></div>
+    <div class="stat"><b id="sAll">–</b><span>téléphones prévenus</span></div>
+  </div>
+</div>
+<script>
+// Same model as scripts/simulate-crowd.ts, slowed down to watch: a 600 m street, phones walking forward,
+// Bluetooth range 15-35 m (bodies absorb), link setup 2-6 s and 25 % failures, a cap on links per phone,
+// 12 Bluetooth packets/s per link (one alert = one packet), and the alert broadcast in the advertising signal
+// by Android phones with BLE 5 (~85 % of Android here), heard by everyone in range, iPhones included.
+const $ = (id) => document.getElementById(id);
+const cv = $('c'), ctx = cv.getContext('2d');
+const L = 600, Wm = 36, RANGE = [15, 35], RATE = 12;
+let phones = [], links = new Map(), pending = [], packets = [], rings = [], t = 0, sosAt = -1, firstMed = -1;
+let seed = 7;
+const rnd = () => ((seed = (seed * 1664525 + 1013904223) >>> 0) / 2 ** 32);
+const pairRange = (a, b) => RANGE[0] + (((a * 7919 + b * 104729) % 1000) / 1000) * (RANGE[1] - RANGE[0]);
+const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
+const key = (a, b) => (a < b ? a + ':' + b : b + ':' + a);
+let degs = [], pend = []; // links and pending connections per phone
+const deg = (p) => degs[p.i];
+const addLink = (a, b) => { links.set(key(a, b), t); degs[a]++; degs[b]++; };
+const dropLink = (k) => { const [a, b] = k.split(':').map(Number); links.delete(k); degs[a]--; degs[b]--; };
+
+function reset() {
+  seed = (Date.now() & 0xffff) + 1;
+  const n = +$('n').value;
+  phones = Array.from({ length: n }, (_, i) => {
+    const ios = rnd() < 0.3;
+    return { i, x: rnd() * L, y: 2 + rnd() * (Wm - 4), v: rnd() < 0.1 ? 0 : 0.6 + rnd() * 0.5, ios, medic: rnd() < 0.06,
+             adv: !ios && rnd() < 0.85, got: -1, nextRing: 0 };
+  });
+  links = new Map(); pending = []; packets = []; rings = []; t = 0; sosAt = -1; firstMed = -1;
+  degs = phones.map(() => 0); pend = phones.map(() => 0);
+}
+function warm() { for (let k = 0; k < 1000; k++) step(0.02); } // 20 s of walking: links have formed
+
+function raise(p) {
+  if (sosAt >= 0) for (const q of phones) q.got = -1;
+  packets = []; rings = []; sosAt = t; firstMed = -1;
+  deliver(p);
+}
+function deliver(p) {
+  if (p.got >= 0) return;
+  p.got = t;
+  if (p.medic && firstMed < 0) firstMed = t - sosAt;
+  // relay over every link (one packet, sent at once: the outbox puts alerts first)
+  for (const k of links.keys()) {
+    const [a, b] = k.split(':').map(Number);
+    const o = a === p.i ? b : b === p.i ? a : -1;
+    if (o >= 0 && phones[o].got < 0) packets.push({ from: p.i, to: o, t0: t, t1: t + 1 / RATE + 0.03 + rnd() * 0.05 });
+  }
+  if (p.adv && $('adv').checked) p.nextRing = t + rnd() * 0.15;
+}
+
+function step(dt) {
+  t += dt;
+  const cap = +$('cap').value;
+  for (const p of phones) {
+    p.x += (p.v + (rnd() - 0.5) * 0.4) * dt; if (p.x > L) p.x -= L;
+    p.y = Math.min(Wm - 1, Math.max(1, p.y + (rnd() - 0.5) * 0.8 * dt));
+  }
+  // links stretch and drop
+  for (const k of [...links.keys()]) {
+    const [a, b] = k.split(':').map(Number);
+    if (Math.abs(phones[a].x - phones[b].x) > L / 2 || dist(phones[a], phones[b]) > pairRange(a, b) * 1.2) dropLink(k);
+  }
+  // discovery: a phone with a free slot finds a neighbour now and then, connecting takes 2-6 s
+  for (const p of phones) {
+    if (degs[p.i] + pend[p.i] >= cap || rnd() > dt / 3) continue;
+    const cands = phones.filter((q) => q !== p && dist(p, q) < pairRange(p.i, q.i) && !links.has(key(p.i, q.i))
+      && !pending.some((c) => key(c.a, c.b) === key(p.i, q.i)) && deg(q) < cap);
+    if (cands.length) { const q = cands[Math.floor(rnd() * cands.length)]; pending.push({ a: p.i, b: q.i, t1: t + 2 + rnd() * 4 }); pend[p.i]++; pend[q.i]++; }
+  }
+  for (const c of pending.filter((c) => t >= c.t1)) {
+    const a = phones[c.a], b = phones[c.b];
+    pend[c.a]--; pend[c.b]--;
+    if (rnd() > 0.25 && dist(a, b) < pairRange(a.i, b.i) && deg(a) < cap && deg(b) < cap) {
+      addLink(a.i, b.i);
+      // a new link syncs: whoever has the alert hands it over
+      if (sosAt >= 0 && (a.got >= 0) !== (b.got >= 0)) { const [s, r] = a.got >= 0 ? [a, b] : [b, a]; packets.push({ from: s.i, to: r.i, t0: t, t1: t + 0.15 }); }
+    }
+  }
+  pending = pending.filter((c) => t < c.t1);
+  // packets arrive
+  for (const pk of packets.filter((pk) => t >= pk.t1)) if (links.has(key(pk.from, pk.to))) deliver(phones[pk.to]);
+  packets = packets.filter((pk) => t < pk.t1);
+  // broadcast: holders advertise the alert (rotation ~0.6 s), everyone in range hears it
+  if ($('adv').checked && sosAt >= 0) for (const p of phones) {
+    if (!p.adv || p.got < 0 || t - p.got > 60 || t < p.nextRing) continue;
+    p.nextRing = t + 0.6;
+    rings.push({ x: p.x, y: p.y, t0: t, r: (RANGE[0] + RANGE[1]) / 2 });
+    for (const q of phones) if (q.got < 0 && dist(p, q) < pairRange(p.i, q.i)) packets.push({ from: -1, to: q.i, t0: t, t1: t + 0.1 + rnd() * 0.2, adv: true });
+  }
+  for (const pk of packets.filter((pk) => pk.adv && t >= pk.t1)) deliver(phones[pk.to]);
+  packets = packets.filter((pk) => !(pk.adv && t >= pk.t1));
+  rings = rings.filter((r) => t - r.t0 < 0.5);
+}
+
+function draw() {
+  const dpr = window.devicePixelRatio || 1, w = cv.clientWidth, h = cv.clientHeight;
+  if (cv.width !== w * dpr) { cv.width = w * dpr; cv.height = h * dpr; }
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, w, h);
+  // the street, drawn in two rows of 300 m to stay readable
+  const rowH = (h - 30) / 2, sx = (w - 20) / (L / 2), sy = rowH / Wm;
+  const P = (x, y) => { const row = x < L / 2 ? 0 : 1; return [10 + (x - row * L / 2) * sx, 10 + row * (rowH + 10) + y * sy]; };
+  ctx.fillStyle = 'rgba(128,128,128,0.08)';
+  ctx.fillRect(10, 10, w - 20, rowH); ctx.fillRect(10, 20 + rowH, w - 20, rowH);
+  ctx.fillStyle = 'rgba(160,160,170,0.6)'; ctx.font = '11px system-ui';
+  ctx.fillText('0 m', 14, 22); ctx.fillText('300 m →', w - 60, 22); ctx.fillText('300 m', 14, 32 + rowH); ctx.fillText('600 m →', w - 60, 32 + rowH);
+  const sameRow = (a, b) => (a.x < L / 2) === (b.x < L / 2);
+  ctx.lineWidth = 1;
+  for (const k of links.keys()) {
+    const [a, b] = k.split(':').map((i) => phones[+i]); if (!sameRow(a, b)) continue;
+    const [x1, y1] = P(a.x, a.y), [x2, y2] = P(b.x, b.y);
+    ctx.strokeStyle = a.got >= 0 && b.got >= 0 ? 'rgba(229,72,77,0.55)' : 'rgba(110,118,130,0.55)';
+    ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke();
+  }
+  ctx.setLineDash([3, 3]); ctx.strokeStyle = 'rgba(245,165,36,0.8)';
+  for (const c of pending) { const a = phones[c.a], b = phones[c.b]; if (!sameRow(a, b)) continue;
+    const [x1, y1] = P(a.x, a.y), [x2, y2] = P(b.x, b.y); ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke(); }
+  ctx.setLineDash([]);
+  for (const r of rings) { const [x, y] = P(r.x, r.y), k = (t - r.t0) / 0.5;
+    ctx.strokeStyle = `rgba(229,72,77,${0.7 * (1 - k)})`; ctx.beginPath(); ctx.ellipse(x, y, r.r * sx * k, r.r * sy * k, 0, 0, 7); ctx.stroke(); }
+  ctx.fillStyle = '#e5484d';
+  for (const pk of packets) { if (pk.adv) continue; const a = phones[pk.from], b = phones[pk.to]; if (!sameRow(a, b)) continue;
+    const k = Math.min(1, (t - pk.t0) / (pk.t1 - pk.t0)), [x1, y1] = P(a.x, a.y), [x2, y2] = P(b.x, b.y);
+    ctx.beginPath(); ctx.arc(x1 + (x2 - x1) * k, y1 + (y2 - y1) * k, 2.5, 0, 7); ctx.fill(); }
+  for (const p of phones) {
+    const [x, y] = P(p.x, p.y);
+    ctx.fillStyle = p.got >= 0 ? '#e5484d' : p.medic ? '#30a46c' : p.ios ? '#c9c3f5' : '#8a8f98';
+    ctx.beginPath(); ctx.arc(x, y, p.medic ? 4.5 : 3, 0, 7); ctx.fill();
+    if (p.medic) { ctx.strokeStyle = '#30a46c'; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(x, y, 6.5, 0, 7); ctx.stroke(); ctx.lineWidth = 1; }
+  }
+  // stats
+  const n = phones.length, med = phones.filter((p) => p.medic), got = phones.filter((p) => p.got >= 0);
+  $('sLinks').textContent = (2 * links.size / n).toFixed(1);
+  $('sT').textContent = sosAt < 0 ? '–' : (t - sosAt).toFixed(1) + ' s';
+  $('sFirst').textContent = firstMed < 0 ? '–' : firstMed.toFixed(1) + ' s';
+  $('sMed').textContent = sosAt < 0 ? '–' : `${med.filter((p) => p.got >= 0).length} / ${med.length}`;
+  $('sAll').textContent = sosAt < 0 ? '–' : Math.round(100 * got.length / n) + ' %';
+  $('nv').textContent = $('n').value; $('capv').textContent = $('cap').value;
+}
+
+let last = performance.now();
+function frame(now) {
+  const dt = Math.min(0.1, (now - last) / 1000) * +$('speed').value; last = now;
+  const sub = Math.ceil(dt / 0.02); for (let k = 0; k < sub; k++) step(dt / sub);
+  draw(); requestAnimationFrame(frame);
+}
+$('reset').onclick = () => { reset(); warm(); }; $('n').onchange = () => { reset(); warm(); };
+$('sos').onclick = () => { const civ = phones.filter((p) => !p.medic); raise(civ[Math.floor(rnd() * civ.length)]); };
+cv.onclick = (e) => { // click a phone to raise the alert from it
+  const r = cv.getBoundingClientRect(), mx = e.clientX - r.left, my = e.clientY - r.top;
+  const w = cv.clientWidth, h = cv.clientHeight, rowH = (h - 30) / 2, sx = (w - 20) / (L / 2), sy = rowH / Wm;
+  let best = null, bd = 400;
+  for (const p of phones) { const row = p.x < L / 2 ? 0 : 1, x = 10 + (p.x - row * L / 2) * sx, y = 10 + row * (rowH + 10) + p.y * sy;
+    const d = (x - mx) ** 2 + (y - my) ** 2; if (d < bd) { bd = d; best = p; } }
+  if (best) raise(best);
+};
+reset();
+warm();
+requestAnimationFrame(frame);
+</script></body></html>
