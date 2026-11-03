@@ -22,7 +22,10 @@
     "production": {
       "ios": {
         "ascAppId": "6830147827",
-        "appleTeamId": "KWF843KA79"
+        "appleTeamId": "KWF843KA79",
+        "ascApiKeyPath": "/home/vitrix/.config/echo/keys/asc/AuthKey_445URAR3ZV.p8",
+        "ascApiKeyIssuerId": "4b7c40c9-eff4-4d4a-a4d4-2ab732b408cb",
+        "ascApiKeyId": "445URAR3ZV"
       }
     }
   }
