@@ -71,7 +71,7 @@ public class BleMeshModule: Module {
     AsyncFunction("send") { (peerId: String, text: String, urgent: Bool, promise: Promise) in
       self.q.async { self.send(peerId, text, urgent, promise) }
     }
-    Function("broadcast") { (_: String, _: String) in } // iOS can't put data in its advertising
+    Function("broadcast") { (_: String, _: String, _: Bool) in } // iOS can't put data in its advertising
     OnDestroy { self.q.async { self.stop() } }
   }
 

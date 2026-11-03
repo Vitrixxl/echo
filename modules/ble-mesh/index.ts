@@ -13,8 +13,9 @@ const BleMesh = requireNativeModule<{
   stop(): Promise<void>;
   /** Resolves once written. urgent: alerts, sent without write response on a link switched to its fast mode. */
   send(peerId: string, text: string, urgent: boolean): Promise<void>;
-  /** Android with BLE 5: broadcasts this one-alert message in the advertising signal for a minute (iOS: no-op). */
-  broadcast(id: string, text: string): void;
+  /** Android with BLE 5: broadcasts this one-alert message in the advertising signal, fast for a minute, then
+   *  slowly while open (iOS: no-op). */
+  broadcast(id: string, text: string, open: boolean): void;
   addListener<K extends keyof Events>(event: K, cb: Events[K]): { remove(): void };
 }>('BleMesh');
 

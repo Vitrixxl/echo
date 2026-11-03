@@ -18,8 +18,10 @@ val SERVICE: UUID = UUID.fromString("dcbe3a65-8595-4490-8012-38f541bb1582")
 val CHAR: UUID = UUID.fromString("dcbe3a66-8595-4490-8012-38f541bb1582")
 // Alerts broadcast in the advertising signal itself (no link needed): service data under this UUID.
 val ADV: UUID = UUID.fromString("dcbe3a67-8595-4490-8012-38f541bb1582")
-const val ADV_KEEP_MS = 60_000L // each alert is broadcast for a minute after it changed
+const val ADV_KEEP_MS = 60_000L // each change is broadcast fast for a minute (closed alerts: then dropped)
+const val ADV_OPEN_MS = 6 * 3600_000L // open alerts stay on air, slowly, until closed (6 h: their lifetime)
 const val ADV_ROTATE_MS = 600L // several alerts take turns in the one advertising set
+const val ADV_ROTATE_SLOW_MS = 1500L // once every alert on air is past its first minute
 const val HEADER = 6 // msgId u16, index u16, total u16
 // Reassembly limits: anyone can write to the GATT server, so partial messages must not pile up in memory.
 const val MAX_PARTS = 1024 // ~180 KB at a 185-byte MTU; real messages are a few KB
@@ -75,8 +77,9 @@ class BleMeshModule : Module() {
     // Resolves once the whole message is written to the peer: the JS outbox sends the next one only then, so
     // it can put alerts first and drop outdated positions instead of piling them up here.
     AsyncFunction("send") { peerId: String, text: String, urgent: Boolean, promise: expo.modules.kotlin.Promise -> send(peerId, text, urgent, promise) }
-    // Puts an alert (base64 of a one-record message) in the broadcast rotation for ADV_KEEP_MS.
-    Function("broadcast") { id: String, text: String -> broadcast(id, text) }
+    // Puts an alert (base64 of a one-record message) in the broadcast rotation: fast for ADV_KEEP_MS, then
+    // slowly for as long as it's open (a medic who walks in later hears it at once, linked or not).
+    Function("broadcast") { id: String, text: String, open: Boolean -> broadcast(id, text, open) }
     OnDestroy { stop() }
   }
 
@@ -195,18 +198,19 @@ class BleMeshModule : Module() {
   // ---- Broadcast (alerts in the advertising signal, received by every phone in range, no link needed) ----
   // Needs BLE 5 extended advertising to fit a whole alert (~60 bytes); older phones only receive.
 
-  private class Adv(val data: ByteArray, val at: Long)
+  private class Adv(val data: ByteArray, val at: Long, val open: Boolean)
   private val advs = LinkedHashMap<String, Adv>() // main thread only
   private var advSet: AdvertisingSet? = null
   private var advStarting = false
   private var advTurn = 0
+  private var advFast = true // the running set's interval
   private val seenAdv = LinkedHashMap<String, Long>() // payloads already passed to JS, to skip repeats
 
-  private fun broadcast(id: String, text: String) {
+  private fun broadcast(id: String, text: String, open: Boolean) {
     val data = android.util.Base64.decode(text, android.util.Base64.NO_WRAP)
     watchdog.post {
       advs.remove(id)
-      advs[id] = Adv(data, System.currentTimeMillis())
+      advs[id] = Adv(data, System.currentTimeMillis(), open)
       seenAdv[text] = System.currentTimeMillis() // our own: don't hand it back to JS when we hear it relayed
       rotate()
     }
@@ -216,7 +220,9 @@ class BleMeshModule : Module() {
   private fun rotate() {
     watchdog.removeCallbacks(rotator)
     val now = System.currentTimeMillis()
-    advs.values.removeAll { now - it.at > ADV_KEEP_MS }
+    advs.values.removeAll { now - it.at > (if (it.open) ADV_OPEN_MS else ADV_KEEP_MS) }
+    // ~100 ms while something just changed, ~1 s after: a few open alerts on air cost next to nothing.
+    val fast = advs.values.any { now - it.at < ADV_KEEP_MS }
     val adapter = manager.adapter
     val advertiser = adapter?.bluetoothLeAdvertiser
     if (advs.isEmpty() || adapter == null || advertiser == null || Build.VERSION.SDK_INT < 26 || !adapter.isLeExtendedAdvertisingSupported) {
@@ -228,17 +234,21 @@ class BleMeshModule : Module() {
     // The UUID is listed too: iPhones can only scan for listed service UUIDs.
     val data = AdvertiseData.Builder().addServiceUuid(ParcelUuid(ADV)).addServiceData(ParcelUuid(ADV), list[advTurn++ % list.size].data).build()
     val set = advSet
-    if (set != null) runCatching { set.setAdvertisingData(data) }
+    if (set != null && advFast != fast) { // interval change: restart the set on the next turn
+      runCatching { advertiser.stopAdvertisingSet(advSetCallback) }
+      advSet = null
+    } else if (set != null) runCatching { set.setAdvertisingData(data) }
     else if (!advStarting) {
       advStarting = true
+      advFast = fast
       val params = AdvertisingSetParameters.Builder()
         .setLegacyMode(false).setConnectable(false).setScannable(false)
-        .setInterval(AdvertisingSetParameters.INTERVAL_LOW) // ~100 ms, only while alerts are being broadcast
+        .setInterval(if (fast) AdvertisingSetParameters.INTERVAL_LOW else AdvertisingSetParameters.INTERVAL_HIGH)
         .setTxPowerLevel(AdvertisingSetParameters.TX_POWER_HIGH)
         .setPrimaryPhy(BluetoothDevice.PHY_LE_1M).setSecondaryPhy(BluetoothDevice.PHY_LE_1M).build()
       runCatching { advertiser.startAdvertisingSet(params, data, null, null, null, advSetCallback) }.onFailure { advStarting = false }
     }
-    watchdog.postDelayed(rotator, ADV_ROTATE_MS)
+    watchdog.postDelayed(rotator, if (fast) ADV_ROTATE_MS else ADV_ROTATE_SLOW_MS)
   }
 
   private val advSetCallback = object : AdvertisingSetCallback() {

@@ -111,9 +111,10 @@ export function useMesh() {
   const [outbox] = useState(() => new Outbox((peerId, text, urgent) =>
     peerId.startsWith(BLE) ? BleMesh.send(peerId.slice(BLE.length), text, urgent) : Nearby.sendText(peerId, text), (list) => encodeRecords(list, NAME)));
   // Alerts (new, closed) also go out in the Bluetooth advertising signal: every phone in range hears them at once,
-  // linked or not. Each phone that learns one rebroadcasts it, so it floods without any link at all.
+  // linked or not. Each phone that learns one rebroadcasts it, so it floods without any link at all. Open alerts
+  // stay on air (slowly) until closed: a medic arriving later in a crowd that has the alert hears it right away.
   const shout = (changed: Alert[]) => {
-    for (const a of changed) if (a.kind === 'sos') { try { BleMesh.broadcast(a.id, encodeRecords([a], NAME)); } catch {} }
+    for (const a of changed) if (a.kind === 'sos') { try { BleMesh.broadcast(a.id, encodeRecords([a], NAME), a.status !== 'done'); } catch {} }
   };
   const sendText = (peerId: string, text: string) => outbox.pushRaw(peerId, text);
   const send = (peerId: string, list: Alert[]) => outbox.push(peerId, list);
@@ -238,7 +239,7 @@ export function useMesh() {
     (async () => {
       try {
         const saved = await AsyncStorage.getItem(KEY);
-        if (saved) { merge(store.current, JSON.parse(saved)); commit(); }
+        if (saved) { merge(store.current, JSON.parse(saved)); commit(); shout(Object.values(store.current)); }
         setSecrets(JSON.parse((await AsyncStorage.getItem(MINE_KEY)) ?? '{}'));
       } catch {}
       start();
