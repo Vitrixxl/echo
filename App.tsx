@@ -32,7 +32,7 @@ const TURN: Record<Turn, { icon: any; rot: string; label: string }> = {
   'slight-left': { icon: 'arrow-up', rot: '-45deg', label: 'Légèrement à gauche' },
   'slight-right': { icon: 'arrow-up', rot: '45deg', label: 'Légèrement à droite' },
   uturn: { icon: 'arrow-undo', rot: '0deg', label: 'Fais demi-tour' },
-  arrive: { icon: 'arrow-up', rot: '0deg', label: "Tout droit jusqu'à l'urgence" },
+  arrive: { icon: 'arrow-up', rot: '0deg', label: "Tout droit jusqu'à l'alerte" },
 };
 const C = {
   bg: '#0F1115', card: '#171A21', line: '#262A33', text: '#F2F4F7', muted: '#9BA1A6',
@@ -580,7 +580,7 @@ function MapScreen({ role, city, onSwitch }: { role: Role; city: City | null; on
   const myAlert = sos.filter((r) => mesh.mine.includes(r.id)).pop();
   // Bottom card: tapped alert, else (medic) where I'm going / nearest emergency, else (civilian) my own alert.
   const featured = sel ?? (role === 'medic' ? sos.find((r) => r.id === going) ?? nearest : myAlert) ?? null;
-  const featuredLabel = sel ? "Besoin d'un medic" : role === 'medic' ? (featured?.id === going ? 'Tu y vas' : 'Urgence la plus proche') : 'Ton alerte';
+  const featuredLabel = sel ? "Besoin d'un medic" : role === 'medic' ? (featured?.id === going ? 'Tu y vas' : 'Alerte la plus proche') : 'Ton alerte';
 
   // Markers are memoized, so they get a stable callback that reads the latest state through a ref.
   const onSos = useRef((_: MeshRecord) => {});
@@ -592,7 +592,7 @@ function MapScreen({ role, city, onSwitch }: { role: Role; city: City | null; on
     }
     const c = cov.get(r.id) ?? coverage(r, medics, sos);
     setDialog({
-      icon: 'navigate', tone: C.orange, title: 'Aller à cette urgence ?',
+      icon: 'navigate', tone: C.orange, title: 'Aller à cette alerte ?',
       body: [shownNote(r.note), describe(r, pos), `${c.onSite} sur place · ${c.enRoute} en route`].filter(Boolean).join('\n'),
       actions: [{ label: 'Non, je continue' }, { label: 'Y aller', color: C.orange, onPress: () => { setGoing(r.id); computeRoute(r, true); } }],
     });
@@ -678,7 +678,7 @@ function MapScreen({ role, city, onSwitch }: { role: Role; city: City | null; on
     setSelected(null);
   };
   const resolve = (id: string) => setDialog({
-    title: 'Urgence résolue ?',
+    title: 'Alerte résolue ?',
     body: "L'alerte disparaîtra de la carte de tout le monde.",
     actions: [{ label: 'Non' }, { label: 'Oui, résolu', color: C.green, onPress: () => close(id) }],
   });
