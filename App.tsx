@@ -342,8 +342,8 @@ function MapScreen({ role, city, onSwitch }: { role: Role; city: City | null; on
   const enterManif = () => { setEntry(false); setManifSaved(true); Manif?.keepAlive(); };
   const toggleManif = () => (manif ? setManifSaved(false) : setEntry(true));
 
-  // GPS. Battery: medics need precise, frequent fixes ("sur place" is GPS-based); civilians
-  // get a coarse, slow fix and stop entirely in the background.
+  // GPS: always a fresh precise fix while the app is open (an alert must leave at once, from the right place).
+  // Medics also keep it with the screen off ("sur place"), and so does everyone in mode manif.
   const gps = useRef<Location.LocationSubscription | null>(null);
   const mapReady = useRef(false);
   // One start at a time: the permission dialog itself fires background -> active, which starts it again.
@@ -366,7 +366,8 @@ function MapScreen({ role, city, onSwitch }: { role: Role; city: City | null; on
       role === 'medic'
         // a fix every 20 s even standing still (heartbeat), every 3 s while heading to an alert (guidance)
         ? { accuracy: Location.Accuracy.High, distanceInterval: 0, timeInterval: goingRef.current ? 3000 : 20_000 }
-        : { accuracy: Location.Accuracy.Balanced, distanceInterval: 25, timeInterval: 15000 },
+        // civilians too: a precise fix every 5 s, standing still included, so an alert leaves at once
+        : { accuracy: Location.Accuracy.High, distanceInterval: 0, timeInterval: 5000 },
       onPos,
     );
     return true;
@@ -650,21 +651,24 @@ function MapScreen({ role, city, onSwitch }: { role: Role; city: City | null; on
 
   const closeSheet = useCallback(() => setSheet(null), []);
   const closeCity = useCallback(() => setCityOpen(false), []);
-  const openSheet = (at: Pos | null) => { setTags([]); setNote(''); setSheet({ at }); };
+  // A precise fix asked the moment the sheet opens: ready by the time the details are picked.
+  const freshFix = useRef<Promise<Pos | null> | null>(null);
+  const askFix = () => (freshFix.current ??= Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High })
+    .then((l) => { const p = { lat: l.coords.latitude, lon: l.coords.longitude, acc: l.coords.accuracy ?? undefined, at: l.timestamp }; setPos(p); return p; })
+    .catch(() => null).finally(() => { freshFix.current = null; }));
+  const openSheet = (at: Pos | null) => { setTags([]); setNote(''); setSheet({ at }); if (!at) askFix(); };
   const target = sheet?.at ?? pos;
   const [locating, setLocating] = useState(false);
   const confirm = async () => {
     let at = target;
     if (!at || locating) return;
-    if (!sheet?.at && (!pos?.at || Date.now() - pos.at > 30_000 || (pos.acc ?? 0) > 50)) {
-      // Old or coarse fix: ask for a precise one, but never wait more than 6 s with someone hurt.
+    if (!sheet?.at && (!pos?.at || Date.now() - pos.at > 20_000 || (pos.acc ?? 0) > 50)) {
+      // Old or coarse fix (rare: the GPS runs every 5 s): use the one asked when the sheet opened, but never
+      // hold the alert more than 1.5 s with someone hurt.
       setLocating(true);
-      const fresh = await Promise.race([
-        Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High }).catch(() => null),
-        new Promise<null>((ok) => setTimeout(() => ok(null), 6000)),
-      ]);
+      const fresh = await Promise.race([askFix(), new Promise<null>((ok) => setTimeout(() => ok(null), 1500))]);
       setLocating(false);
-      if (fresh) at = { lat: fresh.coords.latitude, lon: fresh.coords.longitude, acc: fresh.coords.accuracy ?? undefined, at: fresh.timestamp };
+      if (fresh) at = fresh;
     }
     mesh.raise(at.lat, at.lon, [...tags, note.trim()].filter(Boolean).join(' · '), role === 'medic' ? mesh.me : undefined);
     setSheet(null);
