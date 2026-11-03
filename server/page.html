@@ -21,6 +21,24 @@ h1 span{color:#E5484D}
 .off small{font-weight:700;font-size:13px}
 .tract{background:transparent;color:#F2F4F7;border:2px solid #262A33;margin-top:22px}
 .note{color:#9BA1A6;font-size:15px;text-align:center;margin:0}
+.how{padding:56px 0 48px}
+.kicker{color:#E5484D;font-weight:800;font-size:13px;letter-spacing:2px;text-transform:uppercase;margin:0 0 10px}
+h2{font-size:clamp(28px,7.5vw,40px);line-height:1.05;font-weight:900;letter-spacing:-1px;margin:0 0 14px;text-transform:uppercase}
+.how .lead{margin:0 0 24px}
+.sim{position:relative;border-radius:24px;overflow:hidden;border:1px solid #262A33;background:radial-gradient(120% 90% at 50% 0%,#1A1D25 0%,#0B0D11 70%)}
+.sim canvas{display:block;width:100%;height:320px;cursor:pointer;touch-action:manipulation}
+.sim .hud{position:absolute;left:16px;right:16px;bottom:14px;display:flex;justify-content:space-between;align-items:flex-end;gap:12px;pointer-events:none}
+.sim .big{font-weight:900;font-size:clamp(26px,8vw,38px);letter-spacing:-1px;font-variant-numeric:tabular-nums;line-height:1}
+.sim .big small{display:block;font-size:12px;font-weight:700;letter-spacing:.5px;color:#9BA1A6;margin-top:6px;text-transform:uppercase}
+.sim .tag{font-size:12px;font-weight:700;color:#9BA1A6;text-align:right;line-height:1.5}
+.sim .tag b{color:#F2F4F7}
+.sim .hint{position:absolute;top:14px;left:16px;font-size:12px;font-weight:700;color:#5E636B;letter-spacing:.5px;text-transform:uppercase;pointer-events:none}
+.keys{display:flex;flex-wrap:wrap;gap:8px 18px;margin:16px 0 0;padding:0;list-style:none;color:#9BA1A6;font-size:14px}
+.keys i{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:7px;vertical-align:0}
+.facts{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:22px}
+.fact{background:#171A21;border-radius:18px;padding:16px}
+.fact b{display:block;font-size:22px;font-weight:900;margin-bottom:4px}
+.fact span{color:#9BA1A6;font-size:14px;line-height:1.4}
 footer{text-align:center;font-size:14px}
 footer a{color:#9BA1A6;text-decoration:none}
 </style></head><body><main>
@@ -34,5 +52,135 @@ footer a{color:#9BA1A6;text-decoration:none}
 <a class="b tract" href="/tracts"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linejoin="round" aria-hidden="true"><path d="M6 9V3h12v6M6 18H4a1 1 0 0 1-1-1v-6a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v6a1 1 0 0 1-1 1h-2M6 14h12v7H6z"/></svg> TRACTS À IMPRIMER</a>
 <p class="note">Imprime, découpe, distribue dans le cortège.</p>
 </div>
+<section class="how" aria-labelledby="how-t">
+<p class="kicker">Comment ça marche</p>
+<h2 id="how-t">L'alerte saute de téléphone en téléphone.</h2>
+<p class="lead">Un cortège de 400 m, 180 téléphones avec Brancard. Pas de réseau, pas d'antenne : chacun relaie l'alerte en Bluetooth à ceux qui l'entourent, jusqu'aux medics.</p>
+<div class="sim">
+<canvas id="sim" role="img" aria-label="Simulation : une alerte part d'un téléphone et se propage dans le cortège jusqu'aux medics en moins de deux secondes."></canvas>
+<div class="hint" id="hint">Touche un téléphone pour lancer une alerte</div>
+<div class="hud"><div class="big" id="simT">–<small>1er medic prévenu</small></div><div class="tag" id="simTag"></div></div>
+</div>
+<ul class="keys"><li><i style="background:#E5484D;box-shadow:0 0 8px #E5484D"></i>A reçu l'alerte</li><li><i style="background:#30A46C"></i>Medic</li><li><i style="background:#5E636B"></i>Manifestant·e</li></ul>
+<div class="facts"><div class="fact"><b>0 internet</b><span>Les téléphones se parlent directement.</span></div><div class="fact"><b>Sans compte</b><span>Les alertes ne passent par aucun serveur.</span></div></div>
+</section>
 <footer><a href="https://github.com/Vitrixxl/echo">Code source sur GitHub</a> · <a href="/confidentialite">Confidentialité</a></footer>
-</main></body></html>
+</main><script>
+// Same model as scripts/simulate-crowd.ts (Bluetooth range 15-35 m, links 2-6 s to set up, 7 per phone,
+// one packet per alert, broadcast in the advertising signal), on a 400 m street, drawn in two rows.
+(() => {
+const cv = document.getElementById('sim'), ctx = cv.getContext('2d'), T = document.getElementById('simT'), TAG = document.getElementById('simTag');
+const still = matchMedia('(prefers-reduced-motion: reduce)').matches;
+const L = 400, W = 34, N = 180, CAP = 7, RATE = 12;
+let seed = 11, ph, links, pending, packets, rings, flashes, t, sosAt, firstMed, done, visible = false;
+const rnd = () => ((seed = (seed * 1664525 + 1013904223) >>> 0) / 2 ** 32);
+const range = (a, b) => 15 + (((a * 7919 + b * 104729) % 1000) / 1000) * 20;
+const d = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
+const K = (a, b) => (a < b ? a + ':' + b : b + ':' + a);
+function reset() {
+  ph = Array.from({ length: N }, (_, i) => { const ios = rnd() < .3;
+    return { i, x: rnd() * L, y: 2 + rnd() * (W - 4), v: rnd() < .1 ? 0 : .6 + rnd() * .5, medic: rnd() < .06, adv: !ios && rnd() < .85, got: -1, ring: 0, deg: 0, pend: 0 }; });
+  links = new Set(); pending = []; packets = []; rings = []; flashes = []; t = 0; sosAt = -1; firstMed = -1; done = -1;
+  for (let k = 0; k < 1200; k++) step(.02);
+}
+function deliver(p) {
+  if (p.got >= 0) return;
+  p.got = t;
+  if (p.medic) { flashes.push({ p, t0: t }); if (firstMed < 0) firstMed = t - sosAt; }
+  for (const k of links) { const [a, b] = k.split(':').map(Number), o = a === p.i ? b : b === p.i ? a : -1;
+    if (o >= 0 && ph[o].got < 0) packets.push({ from: p.i, to: o, t0: t, t1: t + 1 / RATE + .03 + rnd() * .05 }); }
+  if (p.adv) p.ring = t + rnd() * .15;
+}
+function raise(p) { for (const q of ph) q.got = -1; packets = []; rings = []; flashes = []; sosAt = t; firstMed = -1; done = -1; deliver(p); }
+function step(dt) {
+  t += dt;
+  for (const p of ph) { p.x += (p.v + (rnd() - .5) * .4) * dt; if (p.x > L) p.x -= L; p.y = Math.min(W - 1, Math.max(1, p.y + (rnd() - .5) * .8 * dt)); }
+  for (const k of [...links]) { const [a, b] = k.split(':').map(Number);
+    if (Math.abs(ph[a].x - ph[b].x) > L / 2 || d(ph[a], ph[b]) > range(a, b) * 1.2) { links.delete(k); ph[a].deg--; ph[b].deg--; } }
+  for (const p of ph) {
+    if (p.deg + p.pend >= CAP || rnd() > dt / 3) continue;
+    const c = ph.filter((q) => q !== p && q.deg < CAP && d(p, q) < range(p.i, q.i) && !links.has(K(p.i, q.i)) && !pending.some((c) => K(c.a, c.b) === K(p.i, q.i)));
+    if (c.length) { const q = c[Math.floor(rnd() * c.length)]; pending.push({ a: p.i, b: q.i, t1: t + 2 + rnd() * 4 }); p.pend++; q.pend++; }
+  }
+  for (const c of pending.filter((c) => t >= c.t1)) { const a = ph[c.a], b = ph[c.b]; a.pend--; b.pend--;
+    if (rnd() > .25 && d(a, b) < range(a.i, b.i) && a.deg < CAP && b.deg < CAP) { links.add(K(a.i, b.i)); a.deg++; b.deg++;
+      if (sosAt >= 0 && (a.got >= 0) !== (b.got >= 0)) { const [s, r] = a.got >= 0 ? [a, b] : [b, a]; packets.push({ from: s.i, to: r.i, t0: t, t1: t + .15 }); } } }
+  pending = pending.filter((c) => t < c.t1);
+  if (sosAt >= 0) for (const p of ph) {
+    if (!p.adv || p.got < 0 || t - p.got > 60 || t < p.ring) continue;
+    p.ring = t + .6; rings.push({ x: p.x, y: p.y, t0: t });
+    for (const q of ph) if (q.got < 0 && d(p, q) < range(p.i, q.i)) packets.push({ from: -1, to: q.i, t0: t, t1: t + .1 + rnd() * .2 });
+  }
+  for (const pk of packets.filter((pk) => t >= pk.t1)) if (pk.from < 0 || links.has(K(pk.from, pk.to))) deliver(ph[pk.to]);
+  packets = packets.filter((pk) => t < pk.t1);
+  rings = rings.filter((r) => t - r.t0 < .6);
+  if (sosAt >= 0 && done < 0 && ph.every((p) => !p.medic || p.got >= 0)) done = t;
+}
+let geo;
+function layout() {
+  const w = cv.clientWidth, h = cv.clientHeight, top = 40, gap = 14, rowH = (h - top - 80 - gap) / 2;
+  geo = { w, h, top, gap, rowH, sx: (w - 24) / (L / 2), sy: rowH / W };
+}
+const P = (x, y) => { const r = x < L / 2 ? 0 : 1; return [12 + (x - r * L / 2) * geo.sx, geo.top + r * (geo.rowH + geo.gap) + y * geo.sy]; };
+const same = (a, b) => (a.x < L / 2) === (b.x < L / 2);
+function draw() {
+  const dpr = devicePixelRatio || 1;
+  layout();
+  if (cv.width !== Math.round(geo.w * dpr) || cv.height !== Math.round(geo.h * dpr)) { cv.width = Math.round(geo.w * dpr); cv.height = Math.round(geo.h * dpr); }
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0); ctx.clearRect(0, 0, geo.w, geo.h);
+  // the street: two bands, faint kerbs
+  ctx.fillStyle = 'rgba(255,255,255,.025)';
+  for (const r of [0, 1]) ctx.fillRect(0, geo.top + r * (geo.rowH + geo.gap) - 4, geo.w, geo.rowH + 8);
+  ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.strokeStyle = 'rgba(140,148,160,.16)';
+  for (const k of links) { const [a, b] = k.split(':').map((i) => ph[+i]); if (!same(a, b) || (a.got >= 0 && b.got >= 0)) continue;
+    const [x1, y1] = P(a.x, a.y), [x2, y2] = P(b.x, b.y); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); }
+  ctx.stroke();
+  ctx.beginPath(); ctx.strokeStyle = 'rgba(229,72,77,.35)';
+  for (const k of links) { const [a, b] = k.split(':').map((i) => ph[+i]); if (!same(a, b) || a.got < 0 || b.got < 0) continue;
+    const [x1, y1] = P(a.x, a.y), [x2, y2] = P(b.x, b.y); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); }
+  ctx.stroke();
+  for (const r of rings) { const [x, y] = P(r.x, r.y), k = (t - r.t0) / .6, R = 25 * k;
+    ctx.strokeStyle = `rgba(229,72,77,${.55 * (1 - k)})`; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.ellipse(x, y, R * geo.sx, R * geo.sy, 0, 0, 7); ctx.stroke(); }
+  ctx.shadowColor = '#E5484D'; ctx.shadowBlur = 10; ctx.fillStyle = '#FF8A8D';
+  for (const pk of packets) { if (pk.from < 0) continue; const a = ph[pk.from], b = ph[pk.to]; if (!same(a, b)) continue;
+    const k = Math.min(1, (t - pk.t0) / (pk.t1 - pk.t0)), [x1, y1] = P(a.x, a.y), [x2, y2] = P(b.x, b.y);
+    ctx.beginPath(); ctx.arc(x1 + (x2 - x1) * k, y1 + (y2 - y1) * k, 2, 0, 7); ctx.fill(); }
+  for (const p of ph) { if (p.medic) continue; const [x, y] = P(p.x, p.y), hot = p.got >= 0;
+    ctx.shadowBlur = hot ? 8 : 0; ctx.fillStyle = hot ? '#E5484D' : '#4A4F57'; ctx.beginPath(); ctx.arc(x, y, hot ? 2.6 : 2.2, 0, 7); ctx.fill(); }
+  for (const p of ph) { if (!p.medic) continue; const [x, y] = P(p.x, p.y), hot = p.got >= 0;
+    ctx.shadowColor = hot ? '#E5484D' : '#30A46C'; ctx.shadowBlur = 12; ctx.fillStyle = hot ? '#E5484D' : '#30A46C';
+    ctx.beginPath(); ctx.arc(x, y, 6, 0, 7); ctx.fill(); ctx.shadowBlur = 0; ctx.fillStyle = '#fff';
+    ctx.fillRect(x - 3.5, y - 1, 7, 2); ctx.fillRect(x - 1, y - 3.5, 2, 7); }
+  ctx.shadowBlur = 0;
+  for (const f of flashes) { const k = (t - f.t0) / 1.2; if (k > 1) continue; const [x, y] = P(f.p.x, f.p.y);
+    ctx.strokeStyle = `rgba(48,164,108,${1 - k})`; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(x, y, 6 + 22 * k, 0, 7); ctx.stroke(); }
+  const med = ph.filter((p) => p.medic), got = ph.filter((p) => p.got >= 0).length;
+  T.firstChild.nodeValue = firstMed < 0 ? (sosAt < 0 ? '–' : '…') : firstMed.toFixed(1).replace('.', ',') + ' s';
+  TAG.innerHTML = sosAt < 0 ? '' : `<b>${med.filter((p) => p.got >= 0).length} / ${med.length}</b> medics<br><b>${Math.round(100 * got / N)} %</b> du cortège`;
+}
+const civ = () => { const c = ph.filter((p) => !p.medic && p.x > 40 && p.x < L - 40); return c[Math.floor(rnd() * c.length)]; };
+let last = performance.now(), idle = 0;
+function frame(now) {
+  const dt = Math.min(.05, (now - last) / 1000); last = now;
+  if (visible) {
+    for (let k = 0, n = Math.ceil(dt / .02); k < n; k++) step(dt / n);
+    // loop: an alert, then a pause once every medic has it, then a new one
+    if (sosAt < 0 ? (idle += dt) > 1.2 : done >= 0 && t - done > 3.5) { idle = 0; raise(civ()); }
+    draw();
+  }
+  requestAnimationFrame(frame);
+}
+cv.addEventListener('click', (e) => {
+  const r = cv.getBoundingClientRect(), mx = e.clientX - r.left, my = e.clientY - r.top;
+  let best = null, bd = 900;
+  for (const p of ph) { const [x, y] = P(p.x, p.y), q = (x - mx) ** 2 + (y - my) ** 2; if (q < bd) { bd = q; best = p; } }
+  raise(best ?? civ()); document.getElementById('hint').style.opacity = 0;
+  if (still) { for (let k = 0; k < 150; k++) step(.02); draw(); }
+});
+reset(); layout(); draw();
+if (still) { for (let k = 0; k < 150; k++) step(.02); raise(civ()); for (let k = 0; k < 150; k++) step(.02); draw(); }
+else { new IntersectionObserver(([e]) => { visible = e.isIntersecting; last = performance.now(); }).observe(cv); requestAnimationFrame(frame); }
+addEventListener('resize', () => draw());
+})();
+</script></body></html>
