@@ -1,40 +1,39 @@
 <!doctype html>
 <html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Brancard : tracts à imprimer</title>
-<meta name="theme-color" content="#0F1115">
+<meta name="theme-color" content="#FAFAF7">
 <style>
 /* The A4 sheet is assembled here, in the browser, from one card (card.svg): the server never sends a PDF.
    Printing it, or "Enregistrer en PDF" in the print dialog, gives the exact sheet. */
 @page{size:A4;margin:0}
 *{box-sizing:border-box}
-body{margin:0;background:#0F1115;color:#F2F4F7;font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+body{margin:0;background:#FAFAF7;color:#14161A;font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
 main{max-width:560px;margin:0 auto;padding:28px 24px 40px}
-.brand{display:flex;align-items:center;gap:10px;font-weight:800;font-size:19px;color:#F2F4F7;text-decoration:none}
-h1{font-size:clamp(32px,9vw,46px);line-height:1.05;font-weight:900;letter-spacing:-1px;margin:40px 0 0;text-transform:uppercase}
-.lead{color:#9BA1A6;font-size:17px;line-height:1.55;margin:16px 0 26px}
-button{display:flex;width:100%;align-items:center;justify-content:center;gap:12px;height:68px;border:0;border-radius:24px;background:#E5484D;color:#fff;font:inherit;font-weight:900;font-size:18px;letter-spacing:.3px;cursor:pointer;margin-bottom:12px}
-button.alt{background:transparent;border:2px solid #262A33;margin-bottom:24px}
+.brand{display:flex;align-items:center;gap:10px;font-weight:800;font-size:19px;color:#14161A;text-decoration:none}
+h1{font-size:clamp(36px,10vw,52px);line-height:1.02;font-weight:900;letter-spacing:-1.5px;margin:40px 0 0;text-transform:uppercase}
+.lead{color:#4A4F57;font-size:17px;line-height:1.55;margin:16px 0 26px}
+button{display:flex;width:100%;align-items:center;justify-content:center;gap:12px;height:68px;border:0;border-radius:24px;background:#E5484D;color:#fff;font:inherit;font-weight:900;font-size:18px;letter-spacing:.3px;cursor:pointer;margin-bottom:12px;box-shadow:0 8px 24px rgba(229,72,77,.28)}
+button.alt{background:#fff;color:#14161A;border:2px solid #DEDCD5;box-shadow:none;margin-bottom:24px}
 button:disabled{opacity:.6;cursor:wait}
-.sheet{background:#fff;aspect-ratio:210/297;border-radius:6px;overflow:hidden;margin-bottom:16px}
+.sheet{background:#fff;aspect-ratio:210/297;border-radius:6px;overflow:hidden;margin-bottom:16px;border:1px solid #E2E0D9;box-shadow:0 10px 30px rgba(20,22,26,.08)}
 .sheet svg{display:block;width:100%;height:100%}
 @media print{
   body{background:#fff}
   main{max-width:none;padding:0}
   main>:not(.sheet){display:none}
-  .sheet{width:210mm;height:297mm;border-radius:0;margin:0;break-after:page}
+  .sheet{width:210mm;height:297mm;border:0;box-shadow:none;border-radius:0;margin:0;break-after:page}
 }
 </style></head><body><main>
 <a class="brand" href="/"><svg width="34" height="34" viewBox="0 0 100 100" aria-hidden="true"><rect width="100" height="100" rx="22" fill="#E5484D"/>
 <g fill="#fff"><rect x="21.62" y="76.66" width="56.76" height="3.97" rx="1.99"/><rect x="30.99" y="76.66" width="3.97" height="11.35" rx="1.99"/><rect x="65.04" y="76.66" width="3.97" height="11.35" rx="1.99"/><rect x="41.49" y="64.74" width="26.68" height="9.65" rx="4.82"/><circle cx="34.67" cy="69.28" r="4.82"/><circle cx="50" cy="33.66" r="18.06"/></g><g fill="#E5484D"><rect x="46.22" y="20.76" width="7.57" height="25.8" rx="3.78"/><rect x="37.1" y="29.88" width="25.8" height="7.57" rx="3.78"/></g></svg> Brancard</a>
 <h1>Tracts à imprimer</h1>
-<p class="lead">35 cartes par feuille A4, recto-verso. Imprime à 100&nbsp;% en recto-verso (retournement bord long), découpe le long des pointillés, distribue dans le cortège.</p>
+<p class="lead">48 cartes par feuille A4, recto-verso, sur toute la feuille. Imprime à 100&nbsp;% en recto-verso (retournement bord long), sans bordure si ton imprimante le propose, découpe le long des pointillés, distribue dans le cortège.</p>
 <button id="dl" onclick="download()"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12M7 10l5 5 5-5M5 21h14"/></svg> TÉLÉCHARGER LE PDF</button>
 <button class="alt" onclick="print()"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linejoin="round" aria-hidden="true"><path d="M6 9V3h12v6M6 18H4a1 1 0 0 1-1-1v-6a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v6a1 1 0 0 1-1 1h-2M6 14h12v7H6z"/></svg> IMPRIMER LES TRACTS</button>
-<div class="sheet"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 210 297" role="img" aria-label="Recto : feuille A4 de 35 cartes Brancard à découper">
+<div class="sheet"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 210 297" role="img" aria-label="Recto : feuille A4 de 48 cartes Brancard à découper">
 <defs><symbol id="card" viewBox="{{CARD_VIEWBOX}}">{{CARD}}</symbol></defs>
 <g id="cards"></g>
 <g id="cuts" stroke="#B8B8BD" stroke-width=".15" stroke-dasharray="1.2 1.2"></g>
-<text x="5" y="6" font-size="2.2" fill="#8C8C91" font-family="system-ui,sans-serif">Découper le long des pointillés</text>
 </svg></div>
 <div class="sheet"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 210 297" role="img" aria-label="Verso : messages au dos des cartes">
 <defs><symbol id="back" viewBox="0 0 40 40"><g font-family="Inter,system-ui,sans-serif" fill="#111114" text-anchor="middle">
@@ -46,16 +45,18 @@ button:disabled{opacity:.6;cursor:wait}
 </svg></div>
 </main>
 <script>
-// 5 x 7 cards of 40 mm, centred; one cut serves two cards. The grid is symmetric, so the back lines up
-// whichever way the printer flips the sheet; card content keeps ~4 mm of padding for duplex drift.
-const N = 'http://www.w3.org/2000/svg', C = 40, COLS = 5, ROWS = 7, X = (210 - COLS * C) / 2, Y = (297 - ROWS * C) / 2;
+// 6 x 8 cells over the whole sheet (35 x 37.1 mm), no margin: the card is a 35 mm square centred in its cell.
+// One cut serves two cards; the grid is symmetric, so the back lines up whichever way the printer flips the sheet.
+// ponytail: printers without borderless mode clip ~3 mm at the edges, which only eats the outer cards' padding.
+const N = 'http://www.w3.org/2000/svg', COLS = 6, ROWS = 8, CW = 210 / COLS, CH = 297 / ROWS, C = Math.min(CW, CH);
 const el = (tag, attrs, parent) => { const e = document.createElementNS(N, tag); for (const k in attrs) e.setAttribute(k, attrs[k]); document.getElementById(parent).append(e); };
 for (let r = 0; r < ROWS; r++) for (let c = 0; c < COLS; c++) {
-  el('use', { href: '#card', x: X + c * C, y: Y + r * C, width: C, height: C }, 'cards');
-  el('use', { href: '#back', x: X + c * C, y: Y + r * C, width: C, height: C }, 'backs');
+  const at = { x: c * CW + (CW - C) / 2, y: r * CH + (CH - C) / 2, width: C, height: C };
+  el('use', { href: '#card', ...at }, 'cards');
+  el('use', { href: '#back', ...at }, 'backs');
 }
-for (let c = 0; c <= COLS; c++) el('line', { x1: X + c * C, y1: 2, x2: X + c * C, y2: 295 }, 'cuts');
-for (let r = 0; r <= ROWS; r++) el('line', { x1: 2, y1: Y + r * C, x2: 208, y2: Y + r * C }, 'cuts');
+for (let c = 1; c < COLS; c++) el('line', { x1: c * CW, y1: 0, x2: c * CW, y2: 297 }, 'cuts');
+for (let r = 1; r < ROWS; r++) el('line', { x1: 0, y1: r * CH, x2: 210, y2: r * CH }, 'cuts');
 
 // The PDF is made here too: the sheet is drawn at 300 dpi and wrapped in a one-page A4 PDF (a JPEG image,
 // written by hand below, no library). Nothing is downloaded from the server.
