@@ -15,41 +15,52 @@ h1{font-size:clamp(32px,9vw,46px);line-height:1.05;font-weight:900;letter-spacin
 button{display:flex;width:100%;align-items:center;justify-content:center;gap:12px;height:68px;border:0;border-radius:24px;background:#E5484D;color:#fff;font:inherit;font-weight:900;font-size:18px;letter-spacing:.3px;cursor:pointer;margin-bottom:12px}
 button.alt{background:transparent;border:2px solid #262A33;margin-bottom:24px}
 button:disabled{opacity:.6;cursor:wait}
-.sheet{background:#fff;aspect-ratio:210/297;border-radius:6px;overflow:hidden}
+.sheet{background:#fff;aspect-ratio:210/297;border-radius:6px;overflow:hidden;margin-bottom:16px}
 .sheet svg{display:block;width:100%;height:100%}
 @media print{
   body{background:#fff}
   main{max-width:none;padding:0}
   main>:not(.sheet){display:none}
-  .sheet{width:210mm;height:297mm;border-radius:0}
+  .sheet{width:210mm;height:297mm;border-radius:0;margin:0;break-after:page}
 }
 </style></head><body><main>
 <a class="brand" href="/"><svg width="34" height="34" viewBox="0 0 100 100" aria-hidden="true"><rect width="100" height="100" rx="22" fill="#E5484D"/>
 <g fill="#fff"><rect x="21.62" y="76.66" width="56.76" height="3.97" rx="1.99"/><rect x="30.99" y="76.66" width="3.97" height="11.35" rx="1.99"/><rect x="65.04" y="76.66" width="3.97" height="11.35" rx="1.99"/><rect x="41.49" y="64.74" width="26.68" height="9.65" rx="4.82"/><circle cx="34.67" cy="69.28" r="4.82"/><circle cx="50" cy="33.66" r="18.06"/></g><g fill="#E5484D"><rect x="46.22" y="20.76" width="7.57" height="25.8" rx="3.78"/><rect x="37.1" y="29.88" width="25.8" height="7.57" rx="3.78"/></g></svg> Brancard</a>
 <h1>Tracts à imprimer</h1>
-<p class="lead">20 cartes par feuille A4. Imprime à 100&nbsp;%, découpe le long des pointillés, distribue dans le cortège.</p>
+<p class="lead">35 cartes par feuille A4, recto-verso. Imprime à 100&nbsp;% en recto-verso (retournement bord long), découpe le long des pointillés, distribue dans le cortège.</p>
 <button id="dl" onclick="download()"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12M7 10l5 5 5-5M5 21h14"/></svg> TÉLÉCHARGER LE PDF</button>
 <button class="alt" onclick="print()"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linejoin="round" aria-hidden="true"><path d="M6 9V3h12v6M6 18H4a1 1 0 0 1-1-1v-6a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v6a1 1 0 0 1-1 1h-2M6 14h12v7H6z"/></svg> IMPRIMER LES TRACTS</button>
-<div class="sheet"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 210 297" role="img" aria-label="Feuille A4 de 20 cartes Brancard à découper">
+<div class="sheet"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 210 297" role="img" aria-label="Recto : feuille A4 de 35 cartes Brancard à découper">
 <defs><symbol id="card" viewBox="{{CARD_VIEWBOX}}">{{CARD}}</symbol></defs>
 <g id="cards"></g>
 <g id="cuts" stroke="#B8B8BD" stroke-width=".15" stroke-dasharray="1.2 1.2"></g>
-<text x="9" y="22.5" font-size="2.5" fill="#8C8C91" font-family="system-ui,sans-serif">Découper le long des pointillés</text>
+<text x="5" y="6" font-size="2.2" fill="#8C8C91" font-family="system-ui,sans-serif">Découper le long des pointillés</text>
+</svg></div>
+<div class="sheet"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 210 297" role="img" aria-label="Verso : messages au dos des cartes">
+<defs><symbol id="back" viewBox="0 0 40 40"><g font-family="Inter,system-ui,sans-serif" fill="#111114" text-anchor="middle">
+<text x="20" y="11" font-size="2.7" font-weight="800"><tspan x="20">Merci de ne pas jeter</tspan><tspan x="20" dy="3.4">sur la voie publique.</tspan></text>
+<rect x="16" y="17.4" width="8" height=".5" rx=".25" fill="#E5484D"/>
+<text x="20" y="23" font-size="2.3" fill="#3A3A40"><tspan x="20">Si vous êtes policier, merci</tspan><tspan x="20" dy="3">de ne pas utiliser cette</tspan><tspan x="20" dy="3">application pour chercher</tspan><tspan x="20" dy="3">les medics et les blesser&#160;:)</tspan></text>
+</g></symbol></defs>
+<g id="backs"></g>
 </svg></div>
 </main>
 <script>
-// Same grid as promo/make_flyer.py: 4 x 5 cards of 48 mm, centred; one cut serves two cards.
-const N = 'http://www.w3.org/2000/svg', C = 48, X = (210 - 4 * C) / 2, Y = (297 - 5 * C) / 2;
+// 5 x 7 cards of 40 mm, centred; one cut serves two cards. The grid is symmetric, so the back lines up
+// whichever way the printer flips the sheet; card content keeps ~4 mm of padding for duplex drift.
+const N = 'http://www.w3.org/2000/svg', C = 40, COLS = 5, ROWS = 7, X = (210 - COLS * C) / 2, Y = (297 - ROWS * C) / 2;
 const el = (tag, attrs, parent) => { const e = document.createElementNS(N, tag); for (const k in attrs) e.setAttribute(k, attrs[k]); document.getElementById(parent).append(e); };
-for (let r = 0; r < 5; r++) for (let c = 0; c < 4; c++) el('use', { href: '#card', x: X + c * C, y: Y + r * C, width: C, height: C }, 'cards');
-for (let c = 0; c <= 4; c++) el('line', { x1: X + c * C, y1: 4, x2: X + c * C, y2: 293 }, 'cuts');
-for (let r = 0; r <= 5; r++) el('line', { x1: 4, y1: Y + r * C, x2: 206, y2: Y + r * C }, 'cuts');
+for (let r = 0; r < ROWS; r++) for (let c = 0; c < COLS; c++) {
+  el('use', { href: '#card', x: X + c * C, y: Y + r * C, width: C, height: C }, 'cards');
+  el('use', { href: '#back', x: X + c * C, y: Y + r * C, width: C, height: C }, 'backs');
+}
+for (let c = 0; c <= COLS; c++) el('line', { x1: X + c * C, y1: 2, x2: X + c * C, y2: 295 }, 'cuts');
+for (let r = 0; r <= ROWS; r++) el('line', { x1: 2, y1: Y + r * C, x2: 208, y2: Y + r * C }, 'cuts');
 
 // The PDF is made here too: the sheet is drawn at 300 dpi and wrapped in a one-page A4 PDF (a JPEG image,
 // written by hand below, no library). Nothing is downloaded from the server.
-async function tractsPdf() {
-  const W = 2480, H = 3508; // A4 at 300 dpi
-  const svg = document.querySelector('.sheet svg').cloneNode(true);
+async function jpeg(svgEl, W, H) {
+  const svg = svgEl.cloneNode(true);
   svg.setAttribute('width', W);
   svg.setAttribute('height', H);
   const img = new Image();
@@ -61,24 +72,36 @@ async function tractsPdf() {
   ctx.fillRect(0, 0, W, H);
   ctx.drawImage(img, 0, 0, W, H);
   const b64 = atob(canvas.toDataURL('image/jpeg', 0.92).split(',')[1]); // toBlob can stall in some browsers
-  const jpg = Uint8Array.from(b64, (c) => c.charCodeAt(0));
+  return Uint8Array.from(b64, (c) => c.charCodeAt(0));
+}
+
+async function tractsPdf() {
+  const W = 2480, H = 3508; // A4 at 300 dpi
+  const sheets = [...document.querySelectorAll('.sheet svg')];
+  const jpgs = [];
+  for (const svg of sheets) jpgs.push(await jpeg(svg, W, H));
   const enc = new TextEncoder(), parts = [], offsets = [];
   let size = 0;
   const put = (x) => { const b = typeof x === 'string' ? enc.encode(x) : x; parts.push(b); size += b.length; };
   const obj = (n, body) => { offsets[n] = size; put(`${n} 0 obj\n${body}\nendobj\n`); };
   const page = 'q 595.28 0 0 841.89 0 0 cm /Im0 Do Q';
+  const n = jpgs.length, total = 3 + 2 * n; // 1 catalog, 2 pages, 3 shared content, then page + image per sheet
+  const kids = jpgs.map((_, i) => `${4 + 2 * i} 0 R`).join(' ');
   put('%PDF-1.4\n');
   obj(1, '<< /Type /Catalog /Pages 2 0 R >>');
-  obj(2, '<< /Type /Pages /Kids [3 0 R] /Count 1 >>');
-  obj(3, '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595.28 841.89] /Resources << /XObject << /Im0 4 0 R >> >> /Contents 5 0 R >>');
-  offsets[4] = size;
-  put(`4 0 obj\n<< /Type /XObject /Subtype /Image /Width ${W} /Height ${H} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length ${jpg.length} >>\nstream\n`);
-  put(jpg);
-  put('\nendstream\nendobj\n');
-  obj(5, `<< /Length ${page.length} >>\nstream\n${page}\nendstream`);
+  obj(2, `<< /Type /Pages /Kids [${kids}] /Count ${n} >>`);
+  obj(3, `<< /Length ${page.length} >>\nstream\n${page}\nendstream`);
+  jpgs.forEach((jpg, i) => {
+    const p = 4 + 2 * i, im = p + 1;
+    obj(p, `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595.28 841.89] /Resources << /XObject << /Im0 ${im} 0 R >> >> /Contents 3 0 R >>`);
+    offsets[im] = size;
+    put(`${im} 0 obj\n<< /Type /XObject /Subtype /Image /Width ${W} /Height ${H} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length ${jpg.length} >>\nstream\n`);
+    put(jpg);
+    put('\nendstream\nendobj\n');
+  });
   const xref = size;
-  put(`xref\n0 6\n0000000000 65535 f \n${offsets.slice(1).map((o) => String(o).padStart(10, '0') + ' 00000 n \n').join('')}`);
-  put(`trailer\n<< /Size 6 /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`);
+  put(`xref\n0 ${total}\n0000000000 65535 f \n${offsets.slice(1).map((o) => String(o).padStart(10, '0') + ' 00000 n \n').join('')}`);
+  put(`trailer\n<< /Size ${total} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`);
   return new Blob(parts, { type: 'application/pdf' });
 }
 
