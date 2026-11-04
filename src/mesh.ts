@@ -32,6 +32,10 @@ const MAX_PER_PAYLOAD = CHUNK;
 const MAX_SOS = 300;
 const MAX_MEDICS = 300;
 const BLE = 'ble:'; // peer ids from the BLE transport are prefixed to route sends
+// Bluetooth links work both ways: "ble:<id>" is a link we opened, "ble:in:<id>" one a neighbour opened to us.
+const BLE_IN = BLE + 'in:';
+// One link per neighbour, the best one: Nearby (fastest), then a Bluetooth link we opened, then theirs.
+const rank = (peerId: string) => (!peerId.startsWith(BLE) ? 2 : peerId.startsWith(BLE_IN) ? 0 : 1);
 
 // Cryptographic randomness (Math.random can be predicted from its outputs, and SOS secrets must not be).
 const randomHex = (bytes: number) => bytesToHex(Crypto.getRandomBytes(bytes));
@@ -149,22 +153,20 @@ export function useMesh() {
   };
 
   useEffect(() => {
-    // One link per neighbour: two Android (or two iPhones) close by link over both Bluetooth and Nearby
-    // (Multipeer), and every message would cross twice. Both sides advertise the same random NAME, so a
-    // Bluetooth link to a phone already linked over Nearby (faster) is kept in reserve, used if Nearby drops.
+    // One link per neighbour: two phones close by may link over Nearby and over Bluetooth, and over Bluetooth in
+    // both directions, and every message would cross several times. Links to the same mesh name (advertised, or
+    // carried by its messages) are twins: the best one (rank) is used, the others are kept in reserve.
     const names = new Map<string, string>(); // peerId -> mesh name, when known
     const spare = new Set<string>(); // Bluetooth links held back: their phone is linked over Nearby
     const twin = (peerId: string) => {
       const n = names.get(peerId);
       return n ? [...peers.current, ...spare].filter((q) => q !== peerId && names.get(q) === n) : [];
     };
+    const demote = (q: string) => { peers.current.delete(q); outbox.drop(q); spare.add(q); };
     const link = (peerId: string, name?: string | null) => {
       if (name) names.set(peerId, name);
-      const ble = peerId.startsWith(BLE);
-      if (ble && twin(peerId).some((q) => !q.startsWith(BLE) && peers.current.has(q))) { spare.add(peerId); return; }
-      if (!ble) for (const q of twin(peerId)) if (q.startsWith(BLE) && peers.current.has(q)) {
-        peers.current.delete(q); outbox.drop(q); spare.add(q);
-      }
+      if (twin(peerId).some((q) => peers.current.has(q) && rank(q) >= rank(peerId))) { spare.add(peerId); return; }
+      for (const q of twin(peerId)) if (peers.current.has(q)) demote(q);
       peers.current.add(peerId);
       setPeerCount(peers.current.size);
       const all = Object.values(store.current);
@@ -177,14 +179,15 @@ export function useMesh() {
     };
     const answered = new Set<string>(); // peers whose digest we already answered on this link
     const unlink = (peerId: string) => {
-      const reserve = peerId.startsWith(BLE) ? [] : twin(peerId).filter((q) => spare.has(q));
+      // the best twin held in reserve takes over
+      const reserve = peers.current.has(peerId) ? twin(peerId).filter((q) => spare.has(q)).sort((a, b) => rank(b) - rank(a)).slice(0, 1) : [];
       spare.delete(peerId);
       names.delete(peerId);
       peers.current.delete(peerId);
       outbox.drop(peerId);
       answered.delete(peerId);
       setPeerCount(peers.current.size);
-      for (const q of reserve) { spare.delete(q); link(q); } // Nearby dropped: its Bluetooth twin takes over
+      for (const q of reserve) { spare.delete(q); link(q); }
     };
     const receive = (peerId: string, text: string) => {
       const msg = decode(text); // compact binary format (codec.ts); anything malformed decodes to null
@@ -196,6 +199,16 @@ export function useMesh() {
         const list = missingFrom(store.current, msg.digest);
         if (list.length) send(peerId, list);
         return;
+      }
+      // The sender's mesh name: a link whose name we didn't know (incoming links, iPhones out of the foreground)
+      // may turn out to be a twin of a better one.
+      if (msg.from && peerId.startsWith(BLE) && !names.has(peerId) && (peers.current.has(peerId) || spare.has(peerId))) {
+        names.set(peerId, msg.from);
+        if (peers.current.has(peerId)) {
+          if (twin(peerId).some((q) => peers.current.has(q) && rank(q) >= rank(peerId))) demote(peerId);
+          else for (const q of twin(peerId)) if (peers.current.has(q)) demote(q);
+          setPeerCount(peers.current.size);
+        }
       }
       const data = msg.records;
       if (data.length > MAX_PER_PAYLOAD) return;
