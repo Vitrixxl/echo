@@ -31,6 +31,16 @@ test('counts installs (a total, no IP kept)', async () => {
   s.stop();
 });
 
+test('counts visits to the page on /stats', async () => {
+  const { s, url } = await boot();
+  expect(await (await fetch(url + '/stats')).json()).toEqual({ visits: 0, installs: 0 });
+  await fetch(url + '/');
+  await fetch(url + '/');
+  await fetch(url + '/install', { method: 'POST' });
+  expect(await (await fetch(url + '/stats')).json()).toEqual({ visits: 2, installs: 1 });
+  s.stop();
+});
+
 test('publishes a signed update and serves it to the matching runtime only', async () => {
   const { s, url } = await boot();
   const bundle = new TextEncoder().encode('console.log(1)');

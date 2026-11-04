@@ -5,6 +5,7 @@
 //                                  card (card.svg, from promo/make_flyer.py --card-svg) and prints it or saves a PDF
 //   GET  /confidentialite          privacy policy (linked from the app and the App Store listing)
 //   GET  /count, POST /install     install counter: a total, nothing else (the app posts once, on first launch)
+//   GET  /stats                    { visits, installs }: visits counts GET / (a total, no IP kept, bots included)
 //   GET  /updates/manifest         expo-updates protocol 1: the signed manifest for the phone's runtime, or 204
 //   GET  /updates/assets/:sha256   update files
 //   PUT  /updates/assets/:sha256, PUT /updates, PUT /apk   uploads, `Authorization: Bearer $DEPLOY_TOKEN`
@@ -36,6 +37,7 @@ struct App {
     data: PathBuf,
     token: String,
     count: Mutex<u64>,
+    visits: Mutex<u64>,
 }
 
 type Res = Response<Box<dyn Read + Send>>;
@@ -95,8 +97,8 @@ impl App {
         self.token.len() >= 16 && same(get_header(req, "authorization").unwrap_or("").as_bytes(), want.as_bytes())
     }
 
-    fn save_count(&self, n: u64) {
-        let p = self.data.join("count");
+    fn save(&self, name: &str, n: u64) {
+        let p = self.data.join(name);
         let _ = fs::write(p.with_extension("tmp"), n.to_string()).and_then(|_| fs::rename(p.with_extension("tmp"), &p));
     }
 
@@ -143,6 +145,10 @@ impl App {
 
         let res: Res = match (&method, path.as_str()) {
             (Method::Get, "/") => {
+                let mut visits = self.visits.lock().unwrap();
+                *visits += 1;
+                self.save("visits", *visits);
+                drop(visits);
                 let n = *self.count.lock().unwrap();
                 let page = PAGE.replace("{{DOWNLOAD}}", if apk.exists() { BTN_ON } else { BTN_OFF }).replace("{{COUNT}}", &n.to_string());
                 respond(200, page, &[("content-type", "text/html; charset=utf-8")])
@@ -156,12 +162,16 @@ impl App {
             (Method::Get, "/tracts") => respond(200, tracts(), &[("content-type", "text/html; charset=utf-8")]),
             (Method::Get, "/tracts.pdf") => respond(301, Vec::new(), &[("location", "/tracts")]), // links shared before
             (Method::Get, "/count") => json(200, serde_json::json!({ "count": *self.count.lock().unwrap() })),
+            (Method::Get, "/stats") => json(200, serde_json::json!({
+                "visits": *self.visits.lock().unwrap(),
+                "installs": *self.count.lock().unwrap(),
+            })),
             (Method::Post, "/install") => {
                 // No IP kept, not even in memory: the app's own "installed" flag stops double counts.
                 // ponytail: anyone can inflate the total with repeated POSTs; it's a vanity number, nothing depends on it.
                 let mut count = self.count.lock().unwrap();
                 *count += 1;
-                self.save_count(*count);
+                self.save("count", *count);
                 json(200, serde_json::json!({ "count": *count }))
             }
             (Method::Get, "/updates/manifest") => {
@@ -273,11 +283,13 @@ fn main() {
     for d in ["assets", "updates"] {
         fs::create_dir_all(data.join(d)).expect("data dir");
     }
-    let count = fs::read_to_string(data.join("count")).ok().and_then(|s| s.trim().parse().ok()).unwrap_or(0);
+    let load = |name: &str| fs::read_to_string(data.join(name)).ok().and_then(|s| s.trim().parse().ok()).unwrap_or(0);
+    let (count, visits) = (load("count"), load("visits"));
     let app = Arc::new(App {
         data,
         token: env("DEPLOY_TOKEN", ""),
         count: Mutex::new(count),
+        visits: Mutex::new(visits),
     });
     let server = Arc::new(Server::http(format!("0.0.0.0:{port}")).expect("bind"));
     println!("brancard server on :{}", server.server_addr().to_ip().map_or(0, |a| a.port()));
