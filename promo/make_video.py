@@ -1,10 +1,12 @@
-"""Brancard TikTok explainer, "carnet" style: dotted paper, red margin, hand-drawn pieces that
-build up with the voice, word-by-word captions. 1080x1920, 30 fps, cairo -> ffmpeg.
+"""Brancard TikTok explainer in the app's own look: dark background, rounded dark cards, Inter, the app's
+red / green / orange / blue, real app screenshots in rounded frames. Everything moves on smooth eases
+(fade + slight rise, no bounce, no tilt); word-by-word captions synced on the voice. 1080x1920, 30 fps,
+cairo -> ffmpeg.
 
-Usage: python3 -I make_video.py SHOTS_DIR OUT.mp4 TTS_PYTHON
+Usage: python3 -I make_video.py OUT.mp4 TTS_PYTHON [VOICE]
 TTS_PYTHON: a Python with edge-tts installed (runs tts_edge.py; gives word timings for the captions).
-SHOTS_DIR: real app screenshots 02.png (map + SOS button), 03.png (alert sheet), 10.png (route).
-Fonts: Inter + Caveat (OFL) must be installed (fontconfig).
+VOICE: an edge-tts voice, default fr-FR-RemyMultilingualNeural (e.g. fr-FR-VivienneMultilingualNeural).
+Screenshots: store/screenshots-6.9 (iPhone) and promo/trajet-1102.png (route). Font: Inter (fontconfig).
 """
 import array
 import hashlib
@@ -19,31 +21,32 @@ import wave
 
 import cairo
 
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "assets"))
+HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, os.path.join(HERE, "..", "assets"))
 from make_icons import mark, rrect  # noqa: E402  (the app mark, one drawing everywhere)
 
-W, H, FPS = 1080, 1920, 30
-PAPER = (0.988, 0.986, 0.978)
-DOT = (0.83, 0.83, 0.83)
-MARGIN = (0.89, 0.55, 0.55)
-INK = (0.07, 0.07, 0.08)
-GREY = (0.78, 0.78, 0.79)
-NOTE = (0.45, 0.45, 0.47)
-RED = (0.85, 0.27, 0.25)
-BLUE = (0.17, 0.25, 0.94)
-YELLOW = (1.0, 0.85, 0.27)
-GREEN = (0.16, 0.6, 0.38)
-ORANGE = (0.96, 0.6, 0.12)
-TAPE = (1.0, 0.88, 0.45)
-WHITE = (1, 1, 1)
-SANS, HAND = "Inter", "Caveat"
-MX = 96  # red margin line
-CX = W / 2 + MX / 2  # visual center right of the margin
 
-shots_dir, out, tts_py = sys.argv[1:4]
-VOICE_NAME, VOICE_RATE = "fr-FR-RemyMultilingualNeural", "+10%"
-HERE = os.path.dirname(os.path.abspath(__file__))
-SHOT = {k: cairo.ImageSurface.create_from_png(f"{shots_dir}/{k}.png") for k in ("02", "03", "10")}
+def hexrgb(h):
+    return tuple(int(h[i:i + 2], 16) / 255 for i in (1, 3, 5))
+
+
+W, H, FPS = 1080, 1920, 30
+# The app's palette (App.tsx, const C)
+BG, CARD, LINE = hexrgb("#0F1115"), hexrgb("#171A21"), hexrgb("#262A33")
+TEXT, MUTED, DIM = hexrgb("#F2F4F7"), hexrgb("#9BA1A6"), hexrgb("#4A4F59")
+RED, ORANGE, GREEN, BLUE = hexrgb("#E5484D"), hexrgb("#F5A524"), hexrgb("#30A46C"), hexrgb("#3E8EF7")
+WHITE = (1, 1, 1)
+SANS = "Inter"
+CX = W / 2
+
+out, tts_py = sys.argv[1:3]
+VOICE_NAME, VOICE_RATE = (sys.argv[3] if len(sys.argv) > 3 else "fr-FR-RemyMultilingualNeural"), "+10%"
+STORE = os.path.join(HERE, "..", "store", "screenshots-6.9")
+SHOT = {
+    "sos": cairo.ImageSurface.create_from_png(os.path.join(STORE, "1-alerte.png")),
+    "confirm": cairo.ImageSurface.create_from_png(os.path.join(STORE, "2-envoyer-une-alerte.png")),
+    "route": cairo.ImageSurface.create_from_png(os.path.join(HERE, "trajet-1102.png")),
+}
 
 
 # ---------------- helpers ----------------
@@ -51,259 +54,216 @@ def clamp(x, a=0.0, b=1.0):
     return max(a, min(b, x))
 
 
-def ease(x):
+def ease(x):  # ease-out cubic: fast start, soft landing
     x = clamp(x)
     return 1 - (1 - x) ** 3
 
 
-def back(x):  # ease-out-back: a small overshoot, the "pop"
+def smooth(x):  # ease-in-out cubic
     x = clamp(x)
-    c1 = 1.9
-    return 1 + (c1 + 1) * (x - 1) ** 3 + c1 * (x - 1) ** 2
+    return 4 * x ** 3 if x < 0.5 else 1 - (-2 * x + 2) ** 3 / 2
 
 
-def sans(cr, size):
-    cr.select_font_face(SANS, cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_BOLD)
+def mix(a, b, k):
+    return tuple(a[i] + (b[i] - a[i]) * k for i in range(3))
+
+
+def sans(cr, size, bold=True):
+    cr.select_font_face(SANS, cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_BOLD if bold else cairo.FONT_WEIGHT_NORMAL)
     cr.set_font_size(size)
 
 
-def hand(cr, size):
-    cr.select_font_face(HAND, cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_BOLD)
-    cr.set_font_size(size)
-
-
-def ctext(cr, s, x, y, color=INK):
+def ctext(cr, s, x, y, color=TEXT):
     """Text centered on (x, y)."""
     e = cr.text_extents(s)
     cr.set_source_rgb(*color)
-    cr.move_to(x - e.x_advance / 2, y - e.y_bearing - e.height / 2)
+    cr.move_to(x - e.x_advance / 2 - e.x_bearing, y - e.y_bearing - e.height / 2)
     cr.show_text(s)
 
 
-def pop(cr, p, x, y, fn, angle=0.0):
-    """Draw fn() around (x, y), popping in with progress p."""
+def show(cr, p, x, y, fn, rise=36):
+    """Draw fn() around (x, y): fades in while rising a little, with progress p (0..1)."""
     if p <= 0:
         return
-    s = back(p)
+    k = ease(p)
     cr.save()
-    cr.translate(x, y)
-    cr.rotate(angle)
+    cr.translate(x, y + (1 - k) * rise)
+    s = 0.97 + 0.03 * k
     cr.scale(s, s)
     cr.push_group()
-    cr.new_path()  # show_text leaves a current point; without this the next arc draws a stray line
+    cr.new_path()
     fn()
     cr.pop_group_to_source()
-    cr.paint_with_alpha(clamp(p * 2.5))
+    cr.paint_with_alpha(k)
     cr.restore()
 
 
-def stroke(cr, w=5, color=INK):
-    cr.set_source_rgb(*color)
-    cr.set_line_width(w)
-    cr.set_line_cap(cairo.LINE_CAP_ROUND)
-    cr.set_line_join(cairo.LINE_JOIN_ROUND)
+def card(cr, w, h, r=32, fill=CARD, line=LINE):
+    """Rounded dark card centered on origin, with a soft shadow."""
+    for i in range(4):  # cheap soft shadow
+        cr.set_source_rgba(0, 0, 0, 0.10)
+        rrect(cr, -w / 2 - 2 * i, -h / 2 + 10 - 2 * i, w + 4 * i, h + 4 * i, r + 2 * i)
+        cr.fill()
+    cr.set_source_rgb(*fill)
+    rrect(cr, -w / 2, -h / 2, w, h, r)
+    cr.fill_preserve()
+    cr.set_source_rgb(*line)
+    cr.set_line_width(2)
     cr.stroke()
 
 
-def tag(cr, label, bg, fg=INK, size=38, border=True, arrow=False):
-    """Cut-out label (black outline + hard shadow), centered on origin."""
+def pill(cr, label, color=None, size=34, solid=False, fg=TEXT):
+    """The app's chip: dark pill with a coloured dot, or a solid coloured pill. Centered on origin."""
     sans(cr, size)
     e = cr.text_extents(label)
-    w, h = e.x_advance + size * 0.9, size * 1.55
-    x, y = -w / 2, -h / 2
-
-    def path(dx, dy):
-        cr.move_to(x + dx, y + dy)
-        cr.line_to(x + w + dx, y + dy)
-        if arrow:
-            cr.line_to(x + w + h * 0.35 + dx, dy)
-        cr.line_to(x + w + dx, y + h + dy)
-        cr.line_to(x + dx, y + h + dy)
-        cr.close_path()
-
-    if border:
-        cr.set_source_rgb(*INK)
-        path(6, 6)
-        cr.fill()
-    cr.set_source_rgb(*bg)
-    path(0, 0)
-    if border:
-        cr.fill_preserve()
-        cr.set_source_rgb(*INK)
-        cr.set_line_width(4)
+    dot = color is not None and not solid
+    w = e.x_advance + size * 1.3 + (size * 0.75 if dot else 0)
+    h = size * 1.9
+    cr.set_source_rgb(*(color if solid else CARD))
+    rrect(cr, -w / 2, -h / 2, w, h, h / 2)
+    cr.fill_preserve()
+    if not solid:
+        cr.set_source_rgb(*LINE)
+        cr.set_line_width(2)
         cr.stroke()
     else:
+        cr.new_path()
+    x = -w / 2 + size * 0.65
+    if dot:
+        cr.set_source_rgb(*color)
+        cr.arc(x + size * 0.22, 0, size * 0.22, 0, 2 * math.pi)
         cr.fill()
-    ctext(cr, label, 0, 0, fg)
+        x += size * 0.75
+    cr.set_source_rgb(*fg)
+    cr.move_to(x - e.x_bearing, -e.y_bearing - e.height / 2)
+    cr.show_text(label)
 
 
-def stamp(cr, label, color=RED, size=44):
-    sans(cr, size)
-    e = cr.text_extents(label)
-    w, h = e.x_advance + size, size * 1.6
-    cr.set_source_rgba(1, 1, 1, 0.92)
-    cr.rectangle(-w / 2, -h / 2, w, h)
-    cr.fill_preserve()
+def button(cr, label, w, color=RED, size=40):
+    """The app's big action button: full red, rounded, uppercase."""
+    h = size * 2.6
+    cr.set_source_rgba(*color, 0.25)
+    rrect(cr, -w / 2, -h / 2 + 12, w, h, 30)
+    cr.fill()
     cr.set_source_rgb(*color)
-    cr.set_line_width(6)
-    cr.stroke()
-    cr.rectangle(-w / 2 + 9, -h / 2 + 9, w - 18, h - 18)
-    cr.set_line_width(2)
-    cr.stroke()
-    ctext(cr, label, 0, 0, color)
+    rrect(cr, -w / 2, -h / 2, w, h, 30)
+    cr.fill()
+    sans(cr, size)
+    ctext(cr, label, 0, 0, WHITE)
 
 
-def note(cr, s, size=50, color=INK):
-    hand(cr, size)
-    ctext(cr, s, 0, 0, color)
+def icon_tile(cr, s):
+    """The app icon (red tile, white mark), centered on origin."""
+    cr.set_source_rgb(*RED)
+    rrect(cr, -s / 2, -s / 2, s, s, s * 0.24)
+    cr.fill()
+    mark(cr, 0, 0, s, WHITE, RED)
 
 
-def sticky(cr, w, h):
-    cr.set_source_rgba(0, 0, 0, 0.12)
-    cr.rectangle(-w / 2 + 8, -h / 2 + 10, w, h)
+def sos_marker(cr, r=30, halo=1.0):
+    """The map's SOS marker: red disc, white "!", soft halo."""
+    if halo > 0:
+        cr.set_source_rgba(*RED, 0.22 * halo)
+        cr.arc(0, 0, r * 1.75, 0, 2 * math.pi)
+        cr.fill()
+    cr.set_source_rgb(*RED)
+    cr.arc(0, 0, r, 0, 2 * math.pi)
     cr.fill()
     cr.set_source_rgb(*WHITE)
-    cr.rectangle(-w / 2, -h / 2, w, h)
-    cr.fill_preserve()
-    cr.set_source_rgb(0.82, 0.82, 0.82)
-    cr.set_line_width(2)
-    cr.stroke()
+    rrect(cr, -r * 0.1, -r * 0.55, r * 0.2, r * 0.68, r * 0.1)
+    cr.fill()
+    cr.arc(0, r * 0.42, r * 0.12, 0, 2 * math.pi)
+    cr.fill()
 
 
-def tape(cr, w, h):
-    for sx, a in ((-1, -0.5), (1, 0.5)):
-        cr.save()
-        cr.translate(sx * (w / 2 - 20), -h / 2 + 4)
-        cr.rotate(a)
-        cr.set_source_rgba(*TAPE, 0.85)
-        cr.rectangle(-55, -20, 110, 40)
+def medkit(cr, s=1.0, color=GREEN):
+    """The app's medic badge: green rounded square, white cross."""
+    cr.set_source_rgb(*color)
+    rrect(cr, -30 * s, -24 * s, 60 * s, 48 * s, 12 * s)
+    cr.fill()
+    cr.set_source_rgb(*WHITE)
+    rrect(cr, -5 * s, -15 * s, 10 * s, 30 * s, 3 * s)
+    cr.fill()
+    rrect(cr, -15 * s, -5 * s, 30 * s, 10 * s, 3 * s)
+    cr.fill()
+
+
+def phone(cr, s=1.0, ring=LINE, glow=None, fill=CARD):
+    """A phone: rounded dark slab, its outline lit in `ring`."""
+    w, h = 76 * s, 132 * s
+    if glow:
+        cr.set_source_rgba(*glow, 0.18)
+        rrect(cr, -w / 2 - 14 * s, -h / 2 - 14 * s, w + 28 * s, h + 28 * s, 30 * s)
         cr.fill()
-        cr.restore()
+    cr.set_source_rgb(*fill)
+    rrect(cr, -w / 2, -h / 2, w, h, 16 * s)
+    cr.fill_preserve()
+    cr.set_source_rgb(*ring)
+    cr.set_line_width(4 * s)
+    cr.stroke()
+    cr.set_source_rgb(*ring)
+    rrect(cr, -w / 6, -h / 2 + 9 * s, w / 3, 6 * s, 3 * s)
+    cr.fill()
 
 
-def photo(cr, shot, h):
+def screen(cr, shot, h):
+    """A real app screenshot in a rounded device frame, centered on origin."""
     sw, sh = shot.get_width(), shot.get_height()
     w = h * sw / sh
-    sticky(cr, w + 28, h + 28)
+    r = w * 0.13
+    for i in range(5):
+        cr.set_source_rgba(0, 0, 0, 0.12)
+        rrect(cr, -w / 2 - 10 - 3 * i, -h / 2 - 10 + 14 - 3 * i, w + 20 + 6 * i, h + 20 + 6 * i, r + 10 + 3 * i)
+        cr.fill()
+    cr.set_source_rgb(*LINE)
+    rrect(cr, -w / 2 - 10, -h / 2 - 10, w + 20, h + 20, r + 10)
+    cr.fill()
     cr.save()
-    cr.rectangle(-w / 2, -h / 2, w, h)
+    rrect(cr, -w / 2, -h / 2, w, h, r)
     cr.clip()
     cr.translate(-w / 2, -h / 2)
     cr.scale(w / sw, h / sh)
     cr.set_source_surface(shot, 0, 0)
-    cr.get_source().set_filter(cairo.FILTER_GOOD)
+    cr.get_source().set_filter(cairo.FILTER_BEST)
     cr.paint()
     cr.restore()
-    tape(cr, w + 28, h + 28)
-
-
-def stick(cr, s=1.0, lying=False, color=INK, phone=False):
-    """Stick figure centered on origin (~170 px tall at s=1)."""
-    cr.save()
-    if lying:
-        cr.rotate(-math.pi / 2)
-    cr.scale(s, s)
-    cr.arc(0, -62, 22, 0, 2 * math.pi)
-    stroke(cr, 5, color)
-    cr.move_to(0, -40)
-    cr.line_to(0, 25)
-    cr.move_to(-30, -15)
-    cr.line_to(0, -25)
-    cr.line_to(30, -5 if phone else -15)
-    cr.move_to(0, 25)
-    cr.line_to(-22, 80)
-    cr.move_to(0, 25)
-    cr.line_to(22, 80)
-    stroke(cr, 5, color)
-    if phone:
-        cr.set_source_rgb(*INK)
-        cr.rectangle(26, -28, 14, 24)
-        cr.fill()
-    cr.restore()
-
-
-def phone(cr, s=1.0, color=INK, fill=WHITE):
-    w, h = 70 * s, 120 * s
-    cr.set_source_rgb(*fill)
-    cr.rectangle(-w / 2, -h / 2, w, h)
-    cr.fill_preserve()
-    stroke(cr, 5 * s, color)
-    cr.move_to(-w / 6, h / 2 - 12 * s)
-    cr.line_to(w / 6, h / 2 - 12 * s)
-    stroke(cr, 4 * s, color)
-
-
-def xmark(cr, s, color=RED, p=1.0):
-    q1 = clamp(p * 2)
-    cr.move_to(-s, -s)
-    cr.line_to(-s + 2 * s * q1, -s + 2 * s * q1)
-    if p > 0.5:
-        q = (p - 0.5) * 2
-        cr.move_to(s, -s)
-        cr.line_to(s - 2 * s * q, -s + 2 * s * q)
-    stroke(cr, 9, color)
-
-
-def echo_mark(cr, s, color=WHITE):
-    """The Brancard logo centered on origin, s = width. Same drawing as assets/make_icons.py."""
-    mark(cr, 0, 0, s * 1.3, color, None)
-
-
-def medkit(cr, s=1.0, color=GREEN, cross=WHITE):
-    cr.set_source_rgb(*color)
-    cr.rectangle(-40 * s, -26 * s, 80 * s, 56 * s)
-    cr.fill()
-    cr.rectangle(-14 * s, -38 * s, 28 * s, 14 * s)
-    stroke(cr, 6 * s, color)
-    cr.set_source_rgb(*cross)
-    cr.rectangle(-5 * s, -16 * s, 10 * s, 36 * s)
-    cr.rectangle(-18 * s, -3 * s, 36 * s, 10 * s)
-    cr.fill()
-
-
-def checkbox(cr, label, p_check, size=50):
-    """Checkbox at origin (left aligned), label on its right."""
-    s = size * 0.9
-    cr.rectangle(0, -s / 2, s, s)
-    stroke(cr, 5)
-    if p_check > 0:
-        q = ease(p_check)
-        cr.move_to(s * 0.18, 0)
-        cr.line_to(s * 0.18 + s * 0.24 * clamp(q * 2), s * 0.28 * clamp(q * 2))
-        if q > 0.5:
-            r = (q - 0.5) * 2
-            cr.line_to(s * 0.42 + s * 0.45 * r, s * 0.28 - s * 0.62 * r)
-        stroke(cr, 7, GREEN)
-    sans(cr, size * 0.8)
-    cr.set_source_rgb(*INK)
-    e = cr.text_extents(label)
-    cr.move_to(s + 26, -e.y_bearing - e.height / 2)
-    cr.show_text(label)
-
-
-def arrow(cr, x1, y1, x2, y2, p, color=INK, w=5):
-    if p <= 0:
-        return
-    q = ease(p)
-    x, y = x1 + (x2 - x1) * q, y1 + (y2 - y1) * q
-    cr.move_to(x1, y1)
-    cr.line_to(x, y)
-    a = math.atan2(y2 - y1, x2 - x1)
-    if q > 0.85:
-        for d in (2.6, -2.6):
-            cr.move_to(x, y)
-            cr.line_to(x + 22 * math.cos(a + d), y + 22 * math.sin(a + d))
-    stroke(cr, w, color)
+    return w
 
 
 def tap(cr, x, y, p):
+    """A finger tap: a white ring widening and fading."""
     if 0 < p < 1:
-        cr.set_source_rgba(*BLUE, 0.35 * (1 - p))
-        cr.arc(x, y, 26 + 60 * ease(p), 0, 2 * math.pi)
+        k = ease(p)
+        cr.set_source_rgba(1, 1, 1, 0.35 * (1 - k))
+        cr.arc(x, y, 30 + 70 * k, 0, 2 * math.pi)
         cr.fill()
-        cr.set_source_rgba(*BLUE, 0.8 * (1 - p))
-        cr.arc(x, y, 22, 0, 2 * math.pi)
+        cr.set_source_rgba(1, 1, 1, 0.9 * (1 - k))
+        cr.arc(x, y, 26, 0, 2 * math.pi)
         cr.fill()
+
+
+def title(cr, s, size=64, color=TEXT):
+    sans(cr, size)
+    ctext(cr, s, 0, 0, color)
+
+
+def kicker(cr, s, color=RED, size=30):
+    """Small uppercase spaced label, like the site's section kickers."""
+    sans(cr, size)
+    s = " ".join(s.upper())
+    ctext(cr, s, 0, 0, color)
+
+
+def line_draw(cr, x1, y1, x2, y2, p, color, w=6):
+    if p <= 0:
+        return
+    k = smooth(p)
+    cr.move_to(x1, y1)
+    cr.line_to(x1 + (x2 - x1) * k, y1 + (y2 - y1) * k)
+    cr.set_source_rgb(*color)
+    cr.set_line_width(w)
+    cr.set_line_cap(cairo.LINE_CAP_ROUND)
+    cr.stroke()
 
 
 # ---------------- scenes ----------------
@@ -313,49 +273,63 @@ class L:
     def __init__(self, t, b):
         self.t, self.b = t, b
 
-    def p(self, k, off=0.0, dur=0.35):
+    def p(self, k, off=0.0, dur=0.55):
         return clamp((self.t - self.b[k] - off) / dur)
 
 
 def sc_intro(cr, l):
-    def card():
-        sticky(cr, 560, 220)
-        tape(cr, 560, 220)
-        cr.save()
-        cr.translate(-185, 0)
-        cr.set_source_rgb(*RED)
-        cr.rectangle(-62, -62, 124, 124)
-        cr.fill()
-        echo_mark(cr, 112)
-        cr.restore()
-        sans(cr, 80)
-        cr.set_source_rgb(*INK)
-        cr.move_to(-60, 29)
-        cr.show_text("Brancard")
+    # three casualties appear on the dark map, then the app
+    for i, (x, y) in enumerate(((300, 470), (560, 400), (800, 500))):
+        def m(i=i):
+            pulse = 0.5 + 0.5 * math.sin(l.t * 3 + i)
+            sos_marker(cr, 34, 0.6 + 0.4 * pulse)
+        show(cr, l.p(0, 0.3 + 0.35 * i), x, y, m)
+    show(cr, l.p(0, 1.0), CX, 650, lambda: kicker(cr, "de plus en plus de blessés", RED, 32))
 
-    # injured people first, then the app
-    for i, x in enumerate((300, 560, 820)):
-        pop(cr, l.p(0, 0.3 + 0.35 * i), x, 450, lambda: stick(cr, 0.9, lying=True))
-        pop(cr, l.p(0, 0.5 + 0.35 * i), x, 330, lambda: tag(cr, "!", RED, WHITE, 44))
-    pop(cr, l.p(0, 0.8), CX, 620, lambda: note(cr, "de plus en plus de blessés", 60, RED), -0.03)
-    pop(cr, l.p(0, 3.0), CX, 900, card, -0.03)
+    def brand():
+        card(cr, 600, 200, 40)
+        cr.save()
+        cr.translate(-190, 0)
+        icon_tile(cr, 120)
+        cr.restore()
+        sans(cr, 84)
+        cr.set_source_rgb(*TEXT)
+        cr.move_to(-105, 30)
+        cr.show_text("Brancard")
+    show(cr, l.p(0, 3.0, 0.7), CX, 900, brand)
 
 
 def sc_solution(cr, l):
-    xs = [250, 445, 640, 835]
+    xs = [240, 440, 640, 840]
+    y = 560
     for i, x in enumerate(xs):
-        pop(cr, l.p(1, 0.2 + 0.4 * i), x, 560, lambda i=i: phone(cr, 1.0, RED if i == 0 else INK))
         if i:
-            arrow(cr, xs[i - 1] + 50, 560, x - 50, 560, l.p(1, 0.1 + 0.4 * i, 0.4), RED, 6)
-    pop(cr, l.p(1, 0.2), 250, 455, lambda: tag(cr, "SOS", RED, WHITE, 30, border=False))
-    pop(cr, l.p(0, 0.3), CX, 820, lambda: (tag(cr, "INTERNET", WHITE, INK, 44), xmark(cr, 50, RED, l.p(0, 0.6, 0.4))), -0.04)
-    pop(cr, l.p(1, 2.4), CX, 960, lambda: note(cr, "les téléphones à proximité", 56, BLUE), 0.02)
+            line_draw(cr, xs[i - 1] + 50, y, x - 50, y, l.p(1, 0.15 + 0.4 * i, 0.4), RED, 6)
+    for i, x in enumerate(xs):
+        lit = l.t >= l.b[1] + 0.15 + 0.4 * i + (0.4 if i else 0)
+        show(cr, l.p(1, 0.1 + 0.4 * i), x, y, lambda lit=lit: phone(cr, 1.0, RED if lit else LINE, RED if lit else None))
+    show(cr, l.p(1, 0.1), 240, y - 120, lambda: pill(cr, "SOS", RED, 28, solid=True, fg=WHITE))
+
+    def no_net():
+        pill(cr, "Internet", MUTED, 40)
+        k = smooth(l.p(0, 0.7, 0.4))
+        if k > 0:
+            sans(cr, 40)
+            w = cr.text_extents("Internet").x_advance + 40 * 2.05
+            cr.move_to(-w / 2 + 12, 0)
+            cr.line_to(-w / 2 + 12 + (w - 24) * k, 0)
+            cr.set_source_rgb(*RED)
+            cr.set_line_width(6)
+            cr.set_line_cap(cairo.LINE_CAP_ROUND)
+            cr.stroke()
+    show(cr, l.p(0, 0.3), CX, 820, no_net)
+    show(cr, l.p(1, 2.4), CX, 960, lambda: kicker(cr, "téléphone à téléphone", BLUE, 30))
 
 
 random.seed(11)
 NODES = []
 while len(NODES) < 15:
-    q = (random.uniform(210, 960), random.uniform(380, 1020))
+    q = (random.uniform(162, 912), random.uniform(380, 1020))
     if all(math.dist(q, o) > 175 for o in NODES):
         NODES.append(q)
 EDGES = [(i, j) for i in range(len(NODES)) for j in range(i + 1, len(NODES)) if math.dist(NODES[i], NODES[j]) < 290]
@@ -377,76 +351,122 @@ MEDICS = {ORDER[-1], ORDER[len(ORDER) // 2 + 1]}
 
 def sc_mesh(cr, l):
     start, hop = 0.9, 0.5
+    cr.set_line_cap(cairo.LINE_CAP_ROUND)
     for i, j in EDGES:
-        if l.p(0, 0.04 * min(i, j)) <= 0:
+        a = ease(l.p(0, 0.04 * min(i, j)))
+        if a <= 0:
             continue
         cr.move_to(*NODES[i])
         cr.line_to(*NODES[j])
-        stroke(cr, 3, GREY)
+        cr.set_source_rgba(*LINE, a)
+        cr.set_line_width(3)
+        cr.stroke()
         hi, hj = HOP.get(i, 99), HOP.get(j, 99)
         if abs(hi - hj) == 1:
             u, v = (i, j) if hi < hj else (j, i)
-            q = ease(clamp((l.t - start - min(hi, hj) * hop) / hop))
-            if q > 0:
-                cr.move_to(*NODES[u])
-                cr.line_to(NODES[u][0] + (NODES[v][0] - NODES[u][0]) * q, NODES[u][1] + (NODES[v][1] - NODES[u][1]) * q)
-                stroke(cr, 6, RED)
+            line_draw(cr, *NODES[u], *NODES[v], (l.t - start - min(hi, hj) * hop) / hop, RED, 5)
     for i, (x, y) in enumerate(NODES):
-        got = l.t >= start + HOP.get(i, 99) * hop + (hop if i != SRC else 0)
+        at = start + HOP.get(i, 99) * hop + (hop if i != SRC else 0)
+        got = l.t >= at
         med = i in MEDICS
-        fill = (0.86, 0.95, 0.89) if med and got else (1, 0.88, 0.87) if got else WHITE
+        # a ring widens once when the alert lands on this phone
+        k = (l.t - at) / 0.8
+        if 0 < k < 1 and l.p(0, 0.04 * i) >= 1:
+            cr.set_source_rgba(*(GREEN if med else RED), 0.45 * (1 - ease(k)))
+            cr.set_line_width(4)
+            cr.arc(x, y, 30 + 60 * ease(k), 0, 2 * math.pi)
+            cr.stroke()
 
-        def draw(med=med, got=got, fill=fill):
-            phone(cr, 0.6, GREEN if med else (RED if got else INK), fill)
+        def draw(med=med, got=got):
+            col = GREEN if med and got else RED if got else LINE
+            phone(cr, 0.55, col, col if got else None)
             if med:
-                medkit(cr, 0.33)
-
-        pop(cr, l.p(0, 0.04 * i), x, y, draw)
+                medkit(cr, 0.5)
+        show(cr, l.p(0, 0.04 * i), x, y, draw, rise=20)
     x, y = NODES[SRC]
-    pop(cr, clamp((l.t - start) / 0.35), x, y - 70, lambda: tag(cr, "SOS", RED, WHITE, 28, border=False))
-    pop(cr, l.p(0, 2.4), CX, 1095, lambda: note(cr, "+ de monde = + de portée", 56, RED), 0.02)
+    show(cr, clamp((l.t - start) / 0.4), x, y - 72, lambda: pill(cr, "SOS", RED, 24, solid=True, fg=WHITE), rise=12)
+    show(cr, l.p(0, 2.4), CX, 1110, lambda: kicker(cr, "plus de monde, plus de portée", RED, 30))
 
 
-SHOTS_POS = ((0, "02", 330, 700, -0.05), (1, "03", 750, 700, 0.05))
-PHOTO_H = 600
+SHOT_H = 760
 
 
 def sc_civil(cr, l):
-    for k, key, x, y, a in SHOTS_POS:
-        pop(cr, l.p(k), x, y, lambda key=key: photo(cr, SHOT[key], PHOTO_H), a)
-    # taps on the SOS button (shot 02) then the confirm button (shot 03), both at 91.7 % of the height
+    pos = ((0, "sos", CX - 205), (1, "confirm", CX + 205))
+    for k, key, x in pos:
+        show(cr, l.p(k), x, 730, lambda key=key: screen(cr, SHOT[key], SHOT_H))
+    # taps on "APPELER UN MEDIC" then "CONFIRMER L'ALERTE", both at 91.4 % of the screen height
+    dy = (0.914 - 0.5) * SHOT_H
     for k, t0 in ((0, 3.3), (1, 0.4), (1, 0.75)):  # first tap on the words "bouton rouge"
-        _, _, x, y, a = SHOTS_POS[k]
-        dy = (0.917 - 0.5) * PHOTO_H
-        tap(cr, x - math.sin(a) * dy, y + math.cos(a) * dy, clamp((l.t - l.b[k] - t0) / 0.6))
-    pop(cr, l.p(0, 0.1), CX, 315, lambda: tag(cr, "CIVIL", BLUE, WHITE, 40, border=False), -0.03)
-    pop(cr, l.p(1, 1.2), CX, 1075, lambda: note(cr, "l'alerte part avec ta position", 52, RED), -0.02)
+        tap(cr, pos[k][2], 730 + dy, clamp((l.t - l.b[k] - t0) / 0.6))
+    show(cr, l.p(0, 0.1), CX, 300, lambda: pill(cr, "Civil", BLUE, 34))
 
 
 def sc_medic(cr, l):
-    pop(cr, l.p(0), 380, 720, lambda: photo(cr, SHOT["10"], 660), -0.04)
-    pop(cr, l.p(0, 0.1), CX, 315, lambda: tag(cr, "MEDIC", GREEN, WHITE, 40, border=False), 0.03)
-    pop(cr, l.p(0, 1.4), 790, 420, lambda: note(cr, "le chemin,", 54, BLUE), 0.04)
-    pop(cr, l.p(0, 1.7), 790, 480, lambda: note(cr, "même hors-ligne", 54, BLUE), 0.04)
-    pop(cr, l.p(1, 0.6), 790, 640, lambda: tag(cr, "EN ROUTE", ORANGE, INK, 38), -0.05)
-    pop(cr, l.p(1, 1.6), 790, 760, lambda: tag(cr, "SUR PLACE", GREEN, WHITE, 38), 0.04)
-    pop(cr, l.p(2, 0.3), 790, 920, lambda: (medkit(cr, 1.2), cr.translate(0, 95), note(cr, "visible des autres", 46, GREEN)), 0.02)
+    show(cr, l.p(0), 350, 730, lambda: screen(cr, SHOT["route"], SHOT_H))
+    show(cr, l.p(0, 0.1), CX, 300, lambda: pill(cr, "Medic", GREEN, 34))
+    rx = 790
+
+    def route():
+        card(cr, 330, 150, 28)
+        sans(cr, 34)
+        ctext(cr, "Le chemin", 0, -22, TEXT)
+        sans(cr, 28, bold=False)
+        ctext(cr, "même hors-ligne", 0, 26, MUTED)
+    show(cr, l.p(0, 1.4), rx, 470, route)
+    show(cr, l.p(1, 0.6), rx, 640, lambda: pill(cr, "En route", ORANGE, 34))
+    show(cr, l.p(1, 1.6), rx, 750, lambda: pill(cr, "Sur place", GREEN, 34))
+
+    def seen():
+        card(cr, 330, 190, 28)
+        cr.save()
+        cr.translate(0, -30)
+        medkit(cr, 1.0)
+        cr.restore()
+        sans(cr, 28, bold=False)
+        ctext(cr, "visible des autres", 0, 52, MUTED)
+    show(cr, l.p(2, 0.3), rx, 930, seen)
 
 
 def sc_before(cr, l):
-    pop(cr, l.p(0), CX, 410, lambda: note(cr, "avant la manif :", 76, INK), -0.03)
-    for i, (off, label) in enumerate(((1.4, "installer Brancard"), (2.8, "télécharger la carte"))):
-        pop(cr, l.p(0, off - 0.6), 190, 590 + i * 140, lambda label=label, off=off: checkbox(cr, label, l.p(0, off, 0.5)))
+    show(cr, l.p(0), CX, 420, lambda: kicker(cr, "avant la manif", RED, 34))
+    for i, (off, label) in enumerate(((1.4, "Installer Brancard"), (2.8, "Télécharger la carte"))):
+        def row(label=label, off=off):
+            card(cr, 760, 130, 32)
+            k = ease(l.p(0, off, 0.5))
+            cx = -380 + 75
+            cr.set_source_rgb(*mix(LINE, GREEN, k))
+            cr.arc(cx, 0, 30, 0, 2 * math.pi)
+            cr.fill()
+            if k > 0:
+                cr.move_to(cx - 13, 1)
+                cr.line_to(cx - 13 + 9 * clamp(k * 2), 1 + 10 * clamp(k * 2))
+                if k > 0.5:
+                    q = (k - 0.5) * 2
+                    cr.line_to(cx - 4 + 18 * q, 11 - 22 * q)
+                cr.set_source_rgb(*WHITE)
+                cr.set_line_width(6)
+                cr.set_line_cap(cairo.LINE_CAP_ROUND)
+                cr.set_line_join(cairo.LINE_JOIN_ROUND)
+                cr.stroke()
+            sans(cr, 42)
+            e = cr.text_extents(label)
+            cr.set_source_rgb(*TEXT)
+            cr.move_to(cx + 60, -e.y_bearing - e.height / 2)
+            cr.show_text(label)
+        show(cr, l.p(0, off - 0.6), CX, 600 + i * 170, row)
 
 
 def sc_share(cr, l):
-    xs = [250, 445, 640, 835]
+    xs = [240, 440, 640, 840]
+    y = 560
     for i, x in enumerate(xs):
-        pop(cr, l.p(0, 0.15 * i), x, 560, lambda: (phone(cr, 1.0), medkit(cr, 0.55, RED)))
         if i:
-            arrow(cr, xs[i - 1] + 50, 560, x - 50, 560, l.p(0, 0.1 + 0.15 * i, 0.3), RED, 6)
-    pop(cr, l.p(0, 0.6), CX, 780, lambda: note(cr, "faites passer", 80, RED), -0.03)
-    pop(cr, l.p(1, 0.3), CX, 960, lambda: tag(cr, "LIEN EN BIO", YELLOW, INK, 46, arrow=True), 0.03)
+            line_draw(cr, xs[i - 1] + 50, y, x - 50, y, l.p(0, 0.1 + 0.15 * i, 0.4), RED, 6)
+    for i, x in enumerate(xs):
+        show(cr, l.p(0, 0.15 * i), x, y, lambda: (phone(cr, 1.0, RED, RED), medkit(cr, 0.7, RED)))
+    show(cr, l.p(0, 0.6), CX, 780, lambda: title(cr, "Faites passer", 84))
+    show(cr, l.p(1, 0.3), CX, 950, lambda: button(cr, "LIEN EN BIO", 520))
 
 
 # (right header, scene, [(caption with *highlights*, phonetic text for the voice or None, small note or None)])
@@ -534,35 +554,43 @@ SCENES, BEATS, TOTAL, VOICE = build()
 
 
 # ---------------- frame ----------------
-def paper(cr):
-    cr.set_source_rgb(*PAPER)
+FADE = 0.3  # scenes cross-fade instead of hard cuts
+
+
+def background(cr):
+    cr.set_source_rgb(*BG)
     cr.paint()
-    cr.set_source_rgb(*DOT)
-    for y in range(24, H, 44):
-        for x in range(24, W, 44):
-            cr.rectangle(x, y, 3, 3)
-    cr.fill()
-    cr.set_source_rgb(*MARGIN)
-    cr.rectangle(MX, 0, 3, H)
-    cr.fill()
+    # a faint red glow behind the content, like a street lit by the alert
+    g = cairo.RadialGradient(CX, 700, 0, CX, 700, 900)
+    g.add_color_stop_rgba(0, *RED, 0.07)
+    g.add_color_stop_rgba(1, *RED, 0)
+    cr.set_source(g)
+    cr.paint()
 
 
 def header(cr, right):
-    hand(cr, 58)
-    cr.set_source_rgb(*RED)
-    cr.move_to(MX + 44, 228)
-    cr.show_text("brancard")
+    cr.save()
+    cr.translate(110, 200)
+    icon_tile(cr, 72)
+    cr.restore()
+    sans(cr, 44)
+    cr.set_source_rgb(*TEXT)
+    cr.move_to(166, 216)
+    cr.show_text("Brancard")
     if right:
-        sans(cr, 40)
-        e = cr.text_extents(right)
-        cr.move_to(W - 70 - e.x_advance, 226)
-        cr.show_text(right)
+        cr.save()
+        sans(cr, 28)
+        w = cr.text_extents(right).x_advance + 28 * 1.3
+        cr.translate(W - 74 - w / 2, 200)
+        pill(cr, right, None, 28, fg=MUTED)
+        cr.restore()
 
 
 def caption(cr, t):
     for t0, t1, dur, cap, nt, marks in BEATS:
         if not (t0 - 0.05 <= t < t1):
             continue
+        a = ease((t - t0 + 0.05) / 0.25) * clamp((t1 - t) / 0.12)  # the line fades in, and out at its end
         words, hl, on = [], [], False
         for raw in cap.split(" "):
             on = on or raw.startswith("*")
@@ -570,7 +598,7 @@ def caption(cr, t):
             hl.append(on)
             if raw.rstrip(".,:;?!").endswith("*"):
                 on = False
-        size, lh, maxw = 62, 1.25, 880
+        size, lh, maxw = 60, 1.28, 880
         sans(cr, size)
         lines, cur = [], []
         for i in range(len(words)):
@@ -581,7 +609,7 @@ def caption(cr, t):
                 cur.append(i)
         lines.append(cur)
         real = [i for i, w in enumerate(words) if w.strip(".,:;?!")]  # a lone "?" isn't spoken
-        if len(marks) == len(real):  # a word turns black when the voice says it
+        if len(marks) == len(real):  # a word lights up when the voice says it
             reveal, k = [], -1
             for i in range(len(words)):
                 k += i in real
@@ -593,56 +621,57 @@ def caption(cr, t):
                 reveal.append(t0 + dur * 0.92 * acc / total_chars)
                 acc += len(wd) + 1
         space = cr.text_extents("a a").x_advance - cr.text_extents("aa").x_advance
-        y = 1215
+        y = 1230
+        cr.push_group()
         for line in lines:
             lw = sum(cr.text_extents(words[i]).x_advance for i in line) + space * (len(line) - 1)
             x = CX - lw / 2
             for i in line:
                 e = cr.text_extents(words[i])
-                said = t >= reveal[i]
-                if hl[i] and said:
-                    cr.set_source_rgb(*YELLOW)
-                    cr.rectangle(x - 8, y - size * 0.86, e.x_advance + 16 + (space if i + 1 in line and hl[i + 1] else 0), size * 1.12)
-                    cr.fill()
-                cr.set_source_rgb(*(INK if said else GREY))
+                k = smooth((t - reveal[i] + 0.04) / 0.16)  # dim -> lit, smoothly
+                cr.set_source_rgb(*mix(DIM, RED if hl[i] else TEXT, k))
                 cr.move_to(x, y)
                 cr.show_text(words[i])
                 x += e.x_advance + space
             y += size * lh
         if nt:
-            sans(cr, 28)
-            cr.set_source_rgb(*NOTE)
+            sans(cr, 26, bold=False)
+            cr.set_source_rgb(*MUTED)
             e = cr.text_extents(nt)
             cr.move_to((W - e.x_advance) / 2, H - 34)  # attribution sits at the very bottom
             cr.show_text(nt)
+        cr.pop_group_to_source()
+        cr.paint_with_alpha(a)
         return
 
 
 def end_card(cr, p):
-    cr.set_source_rgb(*BLUE)
-    cr.paint()
-    a = ease(p * 2.5)
+    background(cr)
+    a = ease(p * 2.2)
     cr.save()
-    cr.translate(W / 2, 760)
-    cr.scale(0.85 + 0.15 * a, 0.85 + 0.15 * a)
-    # Red tile, white mark, like the app icon: never a red cross on white (the Red Cross emblem).
+    cr.translate(W / 2, 760 + (1 - a) * 30)
     cr.push_group()
-    cr.set_source_rgb(*RED)
-    rrect(cr, -90, -90, 180, 180, 43)
-    cr.fill()
-    echo_mark(cr, 112, WHITE)
+    icon_tile(cr, 200)
     cr.pop_group_to_source()
     cr.paint_with_alpha(a)
     cr.restore()
+    b = ease((p - 0.12) * 2.5)
+    cr.save()
+    cr.translate(0, (1 - b) * 30)
     cr.push_group()
-    sans(cr, 104)
-    ctext(cr, "Brancard", W / 2, 990, WHITE)
-    hand(cr, 70)
-    ctext(cr, "lien en bio", W / 2, 1110, YELLOW)
-    sans(cr, 26)
-    ctext(cr, "carte © contributeurs OpenStreetMap", W / 2, H - 44, (0.8, 0.83, 1))
+    sans(cr, 110)
+    ctext(cr, "Brancard", W / 2, 990, TEXT)
+    sans(cr, 34, bold=False)
+    ctext(cr, "Alertes medic sans réseau", W / 2, 1075, MUTED)
+    cr.save()
+    cr.translate(W / 2, 1230)
+    button(cr, "LIEN EN BIO", 520)
+    cr.restore()
+    sans(cr, 24, bold=False)
+    ctext(cr, "carte © contributeurs OpenStreetMap", W / 2, H - 44, DIM)
     cr.pop_group_to_source()
-    cr.paint_with_alpha(ease((p - 0.1) * 3))
+    cr.paint_with_alpha(b)
+    cr.restore()
 
 
 def frame(i):
@@ -650,25 +679,37 @@ def frame(i):
     surf = cairo.ImageSurface(cairo.FORMAT_ARGB32, W, H)
     cr = cairo.Context(surf)
     end_at = TOTAL - END_CARD
-    if t >= end_at:
-        end_card(cr, (t - end_at) / END_CARD)
-    else:
-        paper(cr)
+    if t >= end_at - FADE:
+        end_card(cr, (t - end_at + FADE) / END_CARD)
+    if t < end_at:
+        cr.push_group()
+        background(cr)
+        header(cr, SCENES[0][2])
         for s0, s1, head, fn, starts in SCENES:
-            if s0 <= t < s1:  # hard cuts between scenes, like turning a notebook page
-                header(cr, head)
-                cr.save()
+            if s0 <= t < s1:
+                fade = clamp((s1 - t) / FADE) if s1 < end_at else 1.0
+                cr.push_group()
                 fn(cr, L(t - s0, starts))
-                cr.restore()
+                cr.pop_group_to_source()
+                cr.paint_with_alpha(smooth(fade))
         caption(cr, t)
-    cr.set_source_rgb(*BLUE if t < end_at else WHITE)
-    cr.rectangle(0, 0, W * t / TOTAL, 12)
+        cr.pop_group_to_source()
+        cr.paint_with_alpha(1 - smooth((t - end_at + FADE) / FADE))
+    # progress: a thin red line at the top
+    cr.set_source_rgb(*RED)
+    rrect(cr, 0, 0, max(6, W * t / TOTAL), 8, 4)
     cr.fill()
     surf.flush()
     return bytes(surf.get_data())
 
 
 if __name__ == "__main__":
+    if os.environ.get("STILLS"):  # STILLS="3.5 12 30": PNG frames to check the layout, no video
+        for s in os.environ["STILLS"].split():
+            fr = frame(int(float(s) * FPS))
+            img = cairo.ImageSurface.create_for_data(bytearray(fr), cairo.FORMAT_ARGB32, W, H)
+            img.write_to_png(f"{out}-{s}.png")
+        sys.exit(0)
     n = int(TOTAL * FPS)
     ff = subprocess.Popen([
         "ffmpeg", "-y", "-loglevel", "error",
