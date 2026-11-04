@@ -117,6 +117,9 @@ class BleMeshModule : Module() {
     if (!btWatched) { ctx.registerReceiver(btState, IntentFilter(BluetoothAdapter.ACTION_STATE_CHANGED)); btWatched = true }
     val adapter = manager.adapter ?: throw Exception("Bluetooth indisponible")
     if (!adapter.isEnabled) throw Exception("Active le Bluetooth")
+    // Advertise only once our service is in the GATT server (onServiceAdded): a phone that connects earlier
+    // (an iPhone already scanning finds us within milliseconds) sees no service, gives up and backs off for
+    // minutes, and iOS may even keep that empty service list in its cache.
     if (server == null) {
       server = manager.openGattServer(ctx, serverCallback)?.also {
         val svc = BluetoothGattService(SERVICE, BluetoothGattService.SERVICE_TYPE_PRIMARY)
@@ -127,7 +130,14 @@ class BleMeshModule : Module() {
         ))
         it.addService(svc)
       }
-    }
+    } else advertise()
+    scan(true)
+    watchdog.post { rotate() } // alerts still on air before Bluetooth went off
+  }
+
+  private fun advertise() {
+    val name = meshName ?: return
+    val adapter = manager.adapter ?: return
     adapter.bluetoothLeAdvertiser?.startAdvertising(
       AdvertiseSettings.Builder()
         .setAdvertiseMode(AdvertiseSettings.ADVERTISE_MODE_BALANCED) // 250 ms interval: ~3x less than LOW_LATENCY
@@ -138,8 +148,6 @@ class BleMeshModule : Module() {
       AdvertiseData.Builder().addServiceData(ParcelUuid(SERVICE), hexBytes(name)).build(),
       advertiseCallback,
     )
-    scan(true)
-    watchdog.post { rotate() } // alerts still on air before Bluetooth went off
   }
 
   /** (Re)starts the scan: fast (all the time) for FAST_SCAN_MS, then balanced (~25 % of the time). */
@@ -363,6 +371,10 @@ class BleMeshModule : Module() {
   }
 
   private val serverCallback = object : BluetoothGattServerCallback() {
+    override fun onServiceAdded(status: Int, service: BluetoothGattService) {
+      if (status == BluetoothGatt.GATT_SUCCESS && service.uuid == SERVICE) runCatching { advertise() }
+    }
+
     override fun onCharacteristicWriteRequest(
       device: BluetoothDevice, requestId: Int, characteristic: BluetoothGattCharacteristic,
       preparedWrite: Boolean, responseNeeded: Boolean, offset: Int, value: ByteArray?,
