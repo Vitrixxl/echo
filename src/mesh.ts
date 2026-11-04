@@ -284,8 +284,13 @@ export function useMesh() {
       start();
     })();
 
-    // Back from the settings screen (or Bluetooth turned on): try again.
-    const appState = AppState.addEventListener('change', (s) => { if (s === 'active' && errorRef.current) start(); });
+    // Back in the app: find neighbours again right away. Back from the settings screen (or Bluetooth turned on):
+    // start again.
+    const appState = AppState.addEventListener('change', (s) => {
+      if (s !== 'active') return;
+      if (errorRef.current) start();
+      else BleMesh.rescan().catch(() => {});
+    });
 
     // Retry Nearby peers we see but aren't linked to, and expire stale records.
     // Battery: Nearby discovery (BT classic + Wi-Fi scans) is the biggest drain, so it pauses

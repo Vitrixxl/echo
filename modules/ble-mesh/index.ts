@@ -11,6 +11,8 @@ type Events = {
 const BleMesh = requireNativeModule<{
   start(name: string): Promise<void>;
   stop(): Promise<void>;
+  /** Back in the app: retry neighbours at once (backoff cleared) and scan flat out for a while. */
+  rescan(): Promise<void>;
   /** Resolves once written. urgent: alerts, sent without write response on a link switched to its fast mode. */
   send(peerId: string, text: string, urgent: boolean): Promise<void>;
   /** Android with BLE 5: broadcasts this one-alert message in the advertising signal, fast for a minute, then

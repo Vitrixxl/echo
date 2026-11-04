@@ -18,6 +18,7 @@ private let PENDING_S: TimeInterval = 15
 private let MAX_LINKS = 7 // same as Android: flooding only needs the crowd connected
 private let MIN_RSSI = -90
 private let WRITE_TIMEOUT: TimeInterval = 15
+private let SETUP_TIMEOUT: TimeInterval = 10 // connect + service discovery: CoreBluetooth never gives up by itself
 
 /// One chunk to write; the last chunk of a message carries the JS promise, resolved once it is written.
 /// Urgent chunks (alerts) go without write response: no round trip, and every phone of a crowd hears the
@@ -67,6 +68,13 @@ public class BleMeshModule: Module {
       }
     }
     AsyncFunction("stop") { self.q.async { self.stop() } }
+    // Back in the app: neighbours are retried at once (no backoff) and the scan restarts.
+    AsyncFunction("rescan") {
+      self.q.async {
+        self.fails.removeAll(); self.lastTry.removeAll()
+        if let c = self.central, c.state == .poweredOn { c.stopScan(); self.delegate.centralManagerDidUpdateState(c) }
+      }
+    }
     // Resolves once the whole message is written: the JS outbox sends the next one only then.
     AsyncFunction("send") { (peerId: String, text: String, urgent: Bool, promise: Promise) in
       self.q.async { self.send(peerId, text, urgent, promise) }
@@ -233,6 +241,10 @@ public class BleMeshModule: Module {
       m.links[p.identifier] = link
       p.delegate = self
       c.connect(p)
+      // A peer gone before the link is usable would hold this slot forever: give up (didDisconnect backs it off).
+      m.q.asyncAfter(deadline: .now() + SETUP_TIMEOUT) { [weak m] in
+        if let m = m, m.links[p.identifier] === link, link.char == nil { m.central?.cancelPeripheralConnection(p) }
+      }
     }
 
     func centralManager(_ c: CBCentralManager, didConnect p: CBPeripheral) { p.discoverServices([SERVICE]) }
@@ -267,6 +279,12 @@ public class BleMeshModule: Module {
       link.char = char
       m.fails[p.identifier] = nil
       m.sendEvent("onPeer", ["peerId": p.identifier.uuidString, "name": link.name as Any])
+    }
+
+    // The peer's app restarted (its service was removed and added again): this link points at nothing. Drop it;
+    // the scan finds the peer again and a fresh link syncs it.
+    func peripheral(_ p: CBPeripheral, didModifyServices invalidatedServices: [CBService]) {
+      if invalidatedServices.contains(where: { $0.uuid == SERVICE }) { m?.central?.cancelPeripheralConnection(p) }
     }
 
     func peripheralIsReady(toSendWriteWithoutResponse p: CBPeripheral) {

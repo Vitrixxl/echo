@@ -575,6 +575,11 @@ function MapScreen({ role, city, onSwitch }: { role: Role; city: City | null; on
     if (AppState.currentState !== 'active') alarm('🚨 Renfort demandé', body || "Un medic sur place a besoin d'aide.");
   }, [states]);
 
+  // The "new alert" banner goes once that alert is closed (by its author or a medic on site).
+  useEffect(() => {
+    if (mesh.incoming && !sos.some((r) => r.id === mesh.incoming!.id)) mesh.clearIncoming();
+  }, [sos, mesh.incoming]);
+
   const sel = sos.find((r) => r.id === selected) ?? null;
   const dist = (r: MeshRecord) => (pos ? distanceM(pos.lat, pos.lon, r.lat, r.lon) : 0);
   const nearest = pos ? sos.reduce<MeshRecord | null>((b, r) => (!b || dist(r) < dist(b) ? r : b), null) : sos[0] ?? null;

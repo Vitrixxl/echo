@@ -41,6 +41,7 @@ const val MAX_CONNECTIONS = 9
 const val MIN_RSSI = -90 // weaker advertisers are at the edge of range: their links fail and churn
 const val WRITE_TIMEOUT_MS = 15_000L
 const val SETUP_TIMEOUT_MS = 10_000L // connect + MTU + service discovery; some chips never answer one of them
+const val FAST_SCAN_MS = 30_000L // after start or coming back to the app: scan all the time, then ~25 %
 
 /** One chunk to write; the last chunk of a message carries the JS promise, resolved once it is written.
  *  Urgent chunks (alerts) go without write response: no round trip per packet, and losses don't matter
@@ -96,6 +97,12 @@ class BleMeshModule : Module() {
     // or Multipeer can recognise us and keep a single link.
     AsyncFunction("start") { name: String -> start(name) }
     AsyncFunction("stop") { stop() }
+    // Back in the app: neighbours are retried at once (no backoff) and the scan runs flat out for a while.
+    // Android blocks an app starting scans more than 5 times in 30 s: quick back-and-forths don't restart it.
+    AsyncFunction("rescan") {
+      fails.clear(); lastTry.clear()
+      if (meshName != null && server != null && System.currentTimeMillis() - lastFastScan > 10_000L) scan(true)
+    }
     // Resolves once the whole message is written to the peer: the JS outbox sends the next one only then, so
     // it can put alerts first and drop outdated positions instead of piling them up here.
     AsyncFunction("send") { peerId: String, text: String, urgent: Boolean, promise: expo.modules.kotlin.Promise -> send(peerId, text, urgent, promise) }
@@ -131,18 +138,33 @@ class BleMeshModule : Module() {
       AdvertiseData.Builder().addServiceData(ParcelUuid(SERVICE), hexBytes(name)).build(),
       advertiseCallback,
     )
-    val scan = ScanSettings.Builder().setScanMode(ScanSettings.SCAN_MODE_BALANCED) // ~25 % of the time
-    // Extended advertising (broadcast alerts) is only reported with legacy-only scanning turned off.
-    if (Build.VERSION.SDK_INT >= 26 && adapter.isLeExtendedAdvertisingSupported) scan.setLegacy(false).setPhy(ScanSettings.PHY_LE_ALL_SUPPORTED)
-    adapter.bluetoothLeScanner?.startScan(
-      listOf(
-        ScanFilter.Builder().setServiceUuid(ParcelUuid(SERVICE)).build(),
-        ScanFilter.Builder().setServiceData(ParcelUuid(ADV), ByteArray(0), ByteArray(0)).build(),
-      ),
-      scan.build(),
-      scanCallback,
-    )
+    scan(true)
     watchdog.post { rotate() } // alerts still on air before Bluetooth went off
+  }
+
+  /** (Re)starts the scan: fast (all the time) for FAST_SCAN_MS, then balanced (~25 % of the time). */
+  private var lastFastScan = 0L
+  private val slowScan = Runnable { scan(false) }
+  private fun scan(fast: Boolean) {
+    val adapter = manager.adapter ?: return
+    val scanner = adapter.bluetoothLeScanner ?: return
+    if (fast) lastFastScan = System.currentTimeMillis()
+    val settings = ScanSettings.Builder().setScanMode(if (fast) ScanSettings.SCAN_MODE_LOW_LATENCY else ScanSettings.SCAN_MODE_BALANCED)
+    // Extended advertising (broadcast alerts) is only reported with legacy-only scanning turned off.
+    if (Build.VERSION.SDK_INT >= 26 && adapter.isLeExtendedAdvertisingSupported) settings.setLegacy(false).setPhy(ScanSettings.PHY_LE_ALL_SUPPORTED)
+    runCatching { scanner.stopScan(scanCallback) }
+    runCatching {
+      scanner.startScan(
+        listOf(
+          ScanFilter.Builder().setServiceUuid(ParcelUuid(SERVICE)).build(),
+          ScanFilter.Builder().setServiceData(ParcelUuid(ADV), ByteArray(0), ByteArray(0)).build(),
+        ),
+        settings.build(),
+        scanCallback,
+      )
+    }
+    watchdog.removeCallbacks(slowScan)
+    if (fast) watchdog.postDelayed(slowScan, FAST_SCAN_MS)
   }
 
   private fun hexBytes(h: String) = ByteArray(h.length / 2) { h.substring(it * 2, it * 2 + 2).toInt(16).toByte() }
@@ -163,6 +185,7 @@ class BleMeshModule : Module() {
    *  restarts by itself (rotate) once Bluetooth is back. */
   private fun teardown() {
     val adapter = manager.adapter ?: return
+    watchdog.removeCallbacks(slowScan)
     runCatching { adapter.bluetoothLeScanner?.stopScan(scanCallback) }
     runCatching { adapter.bluetoothLeAdvertiser?.stopAdvertising(advertiseCallback) }
     runCatching { adapter.bluetoothLeAdvertiser?.stopAdvertisingSet(advSetCallback) }
@@ -419,6 +442,14 @@ class BleMeshModule : Module() {
       // Idle links don't need fast connection events: saves battery on every link.
       gatt.requestConnectionPriority(BluetoothGatt.CONNECTION_PRIORITY_LOW_POWER)
       sendEvent("onPeer", mapOf("peerId" to gatt.device.address, "name" to link.name))
+    }
+
+    // The peer's app restarted (its GATT service was removed and added again): this link points at nothing.
+    // Drop it; the scan finds the peer again and a fresh link syncs it.
+    override fun onServiceChanged(gatt: BluetoothGatt) {
+      val link = links[gatt.device.address] ?: return
+      link.failAll()
+      runCatching { gatt.disconnect() }
     }
 
     override fun onCharacteristicWrite(gatt: BluetoothGatt, characteristic: BluetoothGattCharacteristic, status: Int) {
