@@ -27,21 +27,27 @@ type Strategy = {
   rotate: number; // s: at the link cap, drop the oldest idle link this often to meet new neighbours (0 = never)
   wire: 'json40' | 'compact'; // json40: JSON messages of up to 40 records; compact: binary, one packet, alerts alone
   adv?: boolean; // alerts also broadcast in the advertising signal (Android with BLE 5: ~70 % of phones here)
+  oneWay?: boolean; // a link only carries data from the phone that opened it (the app before two-way links)
 };
 
 const STRATEGIES: Strategy[] = [
-  { name: 'compact, alerte seule', cap: 7, queue: 'priority', pingEvery: 20, pingKeepalive: 90, pingMoveM: 20, longLinks: false, rotate: 0, wire: 'compact' },
-  { name: '+ diffusion dans le signal', cap: 7, queue: 'priority', pingEvery: 20, pingKeepalive: 90, pingMoveM: 20, longLinks: false, rotate: 0, wire: 'compact', adv: true },
+  { name: 'sens unique (avant)', cap: 7, queue: 'priority', pingEvery: 20, pingKeepalive: 90, pingMoveM: 20, longLinks: false, rotate: 0, wire: 'compact', adv: true, oneWay: true },
+  { name: 'bidirectionnel (maintenant)', cap: 7, queue: 'priority', pingEvery: 20, pingKeepalive: 90, pingMoveM: 20, longLinks: false, rotate: 0, wire: 'compact', adv: true },
 ];
 
-type Scenario = { name: string; phones: number; medicShare: number; length: number; width: number; still: number; rate: number };
+// iosFail: share of iPhone -> Android connections that fail (seen in the field: an iPhone already in the app
+// connects to an Android after minutes, or never); sosIphone: the SOS is raised on an iPhone.
+type Scenario = { name: string; phones: number; medicShare: number; length: number; width: number; still: number; rate: number; iosFail?: number; sosIphone?: boolean };
 // rate: Bluetooth packets/s per link direction (~180 bytes each, write with response): 12 typical, 4 congested
 const SCENARIOS: Scenario[] = [
   { name: 'cortège 300 tél.', phones: 300, medicShare: 0.05, length: 800, width: 25, still: 0.1, rate: 12 },
   { name: 'cortège dense 1000 tél.', phones: 1000, medicShare: 0.04, length: 1000, width: 30, still: 0.1, rate: 12 },
   { name: 'dense + radio saturée, 10 % medics', phones: 1000, medicShare: 0.1, length: 1000, width: 30, still: 0.1, rate: 4 },
   { name: 'peu installée 80 tél.', phones: 80, medicShare: 0.08, length: 800, width: 25, still: 0.1, rate: 12 },
+  { name: 'dense, iPhone→Android 90 % échec, alerte d\'un iPhone', phones: 1000, medicShare: 0.04, length: 1000, width: 30, still: 0.1, rate: 12, iosFail: 0.9, sosIphone: true },
+  { name: '300 tél., iPhone→Android 90 % échec, alerte d\'un iPhone', phones: 300, medicShare: 0.05, length: 800, width: 25, still: 0.1, rate: 12, iosFail: 0.9, sosIphone: true },
 ];
+const iphone = (i: number) => i % 10 >= 7; // ~30 %: no broadcast in the advertising signal
 
 const RANGE = [15, 35];
 const DT = 0.05; // s per tick
@@ -99,9 +105,10 @@ function run(sc: Scenario, st: Strategy, seed: number) {
   const link = (a: Phone, b: Phone, long: boolean) => {
     const range = pairRange(a.i, b.i);
     a.links.set(b.i, { to: b.i, out: [], budget: 0, range, long, since: now, used: now, fly: null });
-    b.links.set(a.i, { to: a.i, out: [], budget: 0, range, long, since: now, used: now, fly: null });
     // connect-time sync: each side sends what the other lacks (digest exchange)
     enqueue(a, b.i, missingFrom(a.store, digest(b.store)));
+    if (st.oneWay) return; // b only sends to a once it opens its own link to a
+    b.links.set(a.i, { to: a.i, out: [], budget: 0, range, long, since: now, used: now, fly: null });
     enqueue(b, a.i, missingFrom(b.store, digest(a.store)));
   };
   const unlink = (a: Phone, b: number) => { a.links.delete(b); phones[b].links.delete(a.i); };
@@ -134,6 +141,7 @@ function run(sc: Scenario, st: Strategy, seed: number) {
         p.pending.delete(to);
         const q = phones[to];
         if (p.links.has(to) || dist(p, q) > pairRange(p.i, to) || r() < 0.25) continue;
+        if (sc.iosFail && iphone(p.i) && !iphone(to) && r() < sc.iosFail) continue;
         if (p.links.size >= st.cap || q.links.size >= st.cap) continue;
         link(p, q, st.longLinks && dist(p, q) > 0.7 * pairRange(p.i, to));
       }
@@ -161,7 +169,7 @@ function run(sc: Scenario, st: Strategy, seed: number) {
     // broadcast: a phone holding the SOS (and able to advertise it) is heard by everyone in range within ~0.1-0.7 s
     // (its advertising rotates every 0.6 s, ~100 ms interval); hearing works on every phone, iPhones included.
     if (st.adv && sosId) for (const p of phones) {
-      if (p.got < 0 || p.i % 10 >= 7 || r() > DT / 0.4) continue;
+      if (p.got < 0 || iphone(p.i) || r() > DT / 0.4) continue;
       for (const q of near(p)) if (q.got < 0 && dist(p, q) < pairRange(p.i, q.i)) {
         const rec = p.store[sosId];
         if (rec) receive(q, -1, [rec]);
@@ -169,7 +177,7 @@ function run(sc: Scenario, st: Strategy, seed: number) {
     }
     // the SOS
     if (!sosId && now >= SOS_AT) {
-      const civ = phones.filter((p) => !p.medic);
+      const civ = phones.filter((p) => !p.medic && (!sc.sosIphone || iphone(p.i)));
       const a = civ[Math.floor(r() * civ.length)];
       sosId = 'sos-' + a.i;
       const rec: Alert = { id: sosId, kind: 'sos', lat: LAT(a.y), lon: LON(a.x), note: 'Blessure', status: 'need', createdAt: T0 + now * 1000, updatedAt: T0 + now * 1000, key: hashSecret('ab'.repeat(32)) };
@@ -205,7 +213,7 @@ function run(sc: Scenario, st: Strategy, seed: number) {
         sent += l.fly.recs.length;
         const recs = l.fly.recs;
         l.fly = null;
-        if (phones[l.to].links.has(p.i)) arrived.push([phones[l.to], p.i, recs]);
+        if (st.oneWay || phones[l.to].links.has(p.i)) arrived.push([phones[l.to], p.i, recs]);
       }
     }
     for (const [q, from, recs] of arrived) receive(q, from, recs);
