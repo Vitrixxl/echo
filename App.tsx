@@ -661,7 +661,16 @@ function MapScreen({ role, city, onSwitch }: { role: Role; city: City | null; on
   const askFix = () => (freshFix.current ??= Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High })
     .then((l) => { const p = { lat: l.coords.latitude, lon: l.coords.longitude, acc: l.coords.accuracy ?? undefined, at: l.timestamp }; setPos(p); return p; })
     .catch(() => null).finally(() => { freshFix.current = null; }));
-  const openSheet = (at: Pos | null) => { setTags([]); setNote(''); setSheet({ at }); if (!at) askFix(); };
+  // 3 open alerts per phone at most (this app's limit: a modified app can't be stopped, the mesh has no identities).
+  const MAX_MINE = 3;
+  const openSheet = (at: Pos | null) => {
+    if (sos.filter((r) => mesh.mine.includes(r.id)).length >= MAX_MINE) return setDialog({
+      title: 'Déjà 3 alertes en cours',
+      body: 'Annule une de tes alertes, ou attends qu\'un medic la résolve, pour en lancer une nouvelle.',
+      actions: [{ label: 'OK', color: C.blue }],
+    });
+    setTags([]); setNote(''); setSheet({ at }); if (!at) askFix();
+  };
   const target = sheet?.at ?? pos;
   const [locating, setLocating] = useState(false);
   const confirm = async () => {

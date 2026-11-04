@@ -29,7 +29,7 @@ const RETRY_MS = 15_000;
 // A hostile phone can send anything: cap what one payload and the whole store may hold, so a flood of
 // fake records can't freeze the map or be relayed across the crowd. A real march has far fewer.
 const MAX_PER_PAYLOAD = CHUNK;
-const MAX_SOS = 300;
+const MAX_CLOSED = 300; // closed alerts kept (the newest): they never block anything, only memory
 const MAX_MEDICS = 300;
 const BLE = 'ble:'; // peer ids from the BLE transport are prefixed to route sends
 // Bluetooth links work both ways: "ble:<id>" is a link we opened, "ble:in:<id>" one a neighbour opened to us.
@@ -220,13 +220,13 @@ export function useMesh() {
       }
       if (off.size >= 3) setClockSkewMin(skewMinutes([...off.values()]));
       const known = new Set(Object.keys(store.current));
-      let sos = 0, medics = 0;
-      for (const a of Object.values(store.current)) a.kind === 'medic' ? medics++ : a.status !== 'done' && sos++;
-      // Updates to records we hold always pass; new ones only while there is room. Only open alerts count:
-      // closed ones never block a new alert (they're trimmed below instead).
+      let medics = 0;
+      for (const a of Object.values(store.current)) if (a.kind === 'medic') medics++;
+      // Updates to records we hold always pass; new medics only while there is room. Alerts are never capped:
+      // a real one must always get through (closed ones are trimmed below).
       const room = data.filter((r: any) => {
         if (!r || typeof r.id !== 'string' || known.has(r.id)) return true;
-        return r.kind === 'medic' ? medics++ < MAX_MEDICS : r.status === 'done' || sos++ < MAX_SOS;
+        return r.kind !== 'medic' || medics++ < MAX_MEDICS;
       });
       // Remember that the sender has these: never send them back to it. Bluetooth replies arrive from another
       // address than our link to that phone, so it's found by the mesh name carried in the message.
@@ -234,7 +234,7 @@ export function useMesh() {
       for (const q of from) if (peers.current.has(q)) outbox.has(q, data);
       const changed = merge(store.current, room);
       if (!changed.length) return;
-      trimClosed(store.current, MAX_SOS);
+      trimClosed(store.current, MAX_CLOSED);
       broadcast(changed, peerId);
       shout(changed);
       commit(changed);
