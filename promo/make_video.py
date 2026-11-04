@@ -503,13 +503,14 @@ SCRIPT = [
     ]),
 ]
 END_CARD = 2.4
+NOTICE = 3.2  # silent opening card: the video is AI-generated
 LEAD, GAP, RATE = 0.15, 0.12, 24000
 
 
 # ---------------- timeline + voice ----------------
 def build():
     tmp = tempfile.mkdtemp()
-    beats, scenes, clips, t = [], [], [], 0.0
+    beats, scenes, clips, t = [], [], [], NOTICE
     for si, (head, fn, lines) in enumerate(SCRIPT):
         s0, starts = t, []
         t += LEAD
@@ -645,6 +646,27 @@ def caption(cr, t):
         return
 
 
+def notice(cr, p):
+    """Opening card, no voice: says the video is AI-generated."""
+    background(cr)
+    a = ease(p * 4)
+    cr.save()
+    cr.translate(0, (1 - a) * 30)
+    cr.push_group()
+    cr.save()
+    cr.translate(CX, 700)
+    icon_tile(cr, 120)
+    cr.restore()
+    sans(cr, 58)
+    for i, s in enumerate(("Vidéo générée par IA", "pour pouvoir partager", "l'application rapidement.")):
+        ctext(cr, s, CX, 900 + i * 78, TEXT)
+    sans(cr, 44, bold=False)
+    ctext(cr, "(désolé)", CX, 1180, MUTED)
+    cr.pop_group_to_source()
+    cr.paint_with_alpha(a)
+    cr.restore()
+
+
 def end_card(cr, p):
     background(cr)
     a = ease(p * 2.2)
@@ -681,7 +703,9 @@ def frame(i):
     end_at = TOTAL - END_CARD
     if t >= end_at - FADE:
         end_card(cr, (t - end_at + FADE) / END_CARD)
-    if t < end_at:
+    if t < NOTICE + FADE:  # under the first scene while it fades in
+        notice(cr, t / NOTICE)
+    if NOTICE <= t < end_at:
         cr.push_group()
         background(cr)
         header(cr, SCENES[0][2])
@@ -694,7 +718,7 @@ def frame(i):
                 cr.paint_with_alpha(smooth(fade))
         caption(cr, t)
         cr.pop_group_to_source()
-        cr.paint_with_alpha(1 - smooth((t - end_at + FADE) / FADE))
+        cr.paint_with_alpha(min(1 - smooth((t - end_at + FADE) / FADE), smooth((t - NOTICE) / FADE)))
     # progress: a thin red line at the top
     cr.set_source_rgb(*RED)
     rrect(cr, 0, 0, max(6, W * t / TOTAL), 8, 4)
