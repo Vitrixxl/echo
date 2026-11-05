@@ -387,8 +387,8 @@ function MapScreen({ role, city, onSwitch }: { role: Role; city: City | null; on
     }
     gps.current ??= await Location.watchPositionAsync(
       role === 'medic'
-        // a fix every 20 s even standing still (heartbeat), every 3 s while heading to an alert (guidance)
-        ? { accuracy: Location.Accuracy.High, distanceInterval: 0, timeInterval: goingRef.current ? 3000 : 20_000 }
+        // a fix every 5 s even standing still (heartbeat), every 3 s while heading to an alert (guidance)
+        ? { accuracy: Location.Accuracy.High, distanceInterval: 0, timeInterval: goingRef.current ? 3000 : 5000 }
         // civilians too: a precise fix every 5 s, standing still included, so an alert leaves at once
         : { accuracy: Location.Accuracy.High, distanceInterval: 0, timeInterval: 5000 },
       onPos,
@@ -419,7 +419,7 @@ function MapScreen({ role, city, onSwitch }: { role: Role; city: City | null; on
       });
   };
 
-  // Medic heartbeat: on movement (at most every 10 s) and every 60 s, carrying the SOS they head to.
+  // Medic heartbeat: every 5 s, carrying the SOS they head to.
   const [going, setGoing] = useState<string | null>(null);
   const goingRef = useRef(going);
   goingRef.current = going;
@@ -436,26 +436,24 @@ function MapScreen({ role, city, onSwitch }: { role: Role; city: City | null; on
     stopGps();
     startGps().catch(() => {});
   }, [tripping]);
-  // Medic heartbeat (tuned with scripts/simulate-crowd.ts): when moved 20 m and 20 s passed, every 90 s otherwise,
-  // at once when the target or the on-site answer changes. Every heartbeat is relayed by every phone of the
-  // crowd, so fewer of them keep the radio free for alerts. Driven by GPS fixes, which keep coming with the
-  // screen off (the app's timers don't); the medic GPS reports every 20 s even standing still.
-  const lastPing = useRef({ at: 0, lat: 0, lon: 0 });
+  // Medic heartbeat: every 5 s, moving or not, and at once when the target or the on-site answer changes.
+  // Every heartbeat is relayed by every phone of the crowd; the outboxes keep only the latest position per medic
+  // and send SOS first (src/outbox.ts), so a busy radio drops positions, not alerts. Driven by GPS fixes, which
+  // keep coming with the screen off (Android freezes the app's timers); the medic GPS reports every 5 s.
+  const lastPing = useRef(0);
   const ping = (force = false) => {
     const p = posRef.current;
     if (role !== 'medic' || !p) return;
     if (p.at && Date.now() - p.at > 120_000) return; // stale fix (indoors, GPS off): say nothing rather than lie
-    const last = lastPing.current, dt = Date.now() - last.at;
-    const moved = distanceM(p.lat, p.lon, last.lat, last.lon);
-    if (!force && !(dt >= 20_000 && moved >= 20) && dt < 90_000) return;
-    lastPing.current = { at: Date.now(), lat: p.lat, lon: p.lon };
+    if (!force && Date.now() - lastPing.current < 4500) return; // fixes and timer both ~5 s apart: allow jitter
+    lastPing.current = Date.now();
     mesh.pingMedic(p.lat, p.lon, goingRef.current, careRef.current);
   };
   useEffect(() => ping(), [pos]);
   useEffect(() => ping(true), [going, care]);
   useEffect(() => {
     if (role !== 'medic') return;
-    const t = setInterval(() => ping(true), 60_000);
+    const t = setInterval(() => ping(), 5000);
     return () => clearInterval(t);
   }, [role]);
 

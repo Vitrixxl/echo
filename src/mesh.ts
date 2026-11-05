@@ -90,7 +90,7 @@ export function useMesh() {
   const [incoming, setIncoming] = useState<Alert | null>(null);
   const [meId, setMeId] = useState('m-' + ME);
   // Our clock against the neighbours': phones more than 10 min apart reject each other's records without a
-  // word. Medic positions are stamped when sent (every 90 s at most) and relayed in seconds, so the median of
+  // word. Medic positions are stamped when sent (every 5 s) and relayed in seconds, so the median of
   // their (time - our time) tells how far off we are.
   const [clockSkewMin, setClockSkewMin] = useState<number | null>(null);
   const offsets = useRef(new Map<string, number>());
@@ -360,7 +360,7 @@ export function useMesh() {
     if (cur) publish({ ...cur, status: 'done', doneBy: 'm-' + ME, doneLat: lat, doneLon: lon, updatedAt: Math.max(Date.now(), cur.updatedAt + 1) });
   };
 
-  // Medic heartbeat: one record per medic, refreshed on every GPS move and at least every 60 s, with the SOS
+  // Medic heartbeat: one record per medic, refreshed every 5 s, with the SOS
   // they head to and, once there, how it goes ("care": on s'en occupe, "help": besoin de renfort).
   const medicCreated = useRef(Date.now());
   const pingMedic = (lat: number, lon: number, target: string | null, state: 'care' | 'help' | null) => {
