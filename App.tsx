@@ -5,6 +5,7 @@ import {
 } from '@maplibre/maplibre-react-native';
 import * as Location from 'expo-location';
 import * as Notifications from 'expo-notifications';
+import * as TaskManager from 'expo-task-manager';
 import { StatusBar } from 'expo-status-bar';
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { ActivityIndicator, AppState, Image, BackHandler, Keyboard, KeyboardAvoidingView, Linking, Pressable, Platform, ScrollView, StyleSheet, Text, TextInput, useWindowDimensions, Vibration, View } from 'react-native';
@@ -24,6 +25,14 @@ const MANIF_KEY = 'echo.manif.v1';
 const ROLE_KEY = 'echo.role.v1';
 const ECO_KEY = 'echo.eco.v1';
 const NO_PAD = { top: 0, bottom: 0, left: 0, right: 0 };
+// iPhone medics: watchPositionAsync stops once the app leaves the screen, a location task keeps going (blue
+// indicator in the status bar, "when in use" permission is enough as it starts with the app open).
+const MEDIC_GPS = 'medic-gps';
+let onTaskFix: ((l: Location.LocationObject) => void) | null = null;
+TaskManager.defineTask<{ locations: Location.LocationObject[] }>(MEDIC_GPS, async ({ data }) => {
+  const l = data?.locations.at(-1);
+  if (l) onTaskFix?.(l);
+});
 const OFF_ROUTE_M = 40; // further than this from the route: offer to recompute it
 const ARRIVED_M = 25;
 const TURN: Record<Turn, { icon: any; rot: string; label: string }> = {
@@ -343,7 +352,7 @@ function MapScreen({ role, city, onSwitch }: { role: Role; city: City | null; on
   const toggleManif = () => (manif ? setManifSaved(false) : setEntry(true));
 
   // GPS: always a fresh precise fix while the app is open (an alert must leave at once, from the right place).
-  // Medics also keep it with the screen off ("sur place"), and so does everyone in mode manif.
+  // Medics also keep it with the screen off ("sur place"), and so does everyone in mode manif (Android only).
   const gps = useRef<Location.LocationSubscription | null>(null);
   const mapReady = useRef(false);
   // One start at a time: the permission dialog itself fires background -> active, which starts it again.
@@ -362,6 +371,20 @@ function MapScreen({ role, city, onSwitch }: { role: Role; city: City | null; on
     // A last known fix only if recent and decent: an hours-old one (from home) must not place an SOS.
     const last = await Location.getLastKnownPositionAsync({ maxAge: 120_000, requiredAccuracy: 200 }).catch(() => null);
     if (last) onPos(last);
+    if (Platform.OS === 'ios') {
+      // Left running by a previous launch (the task survives it), maybe in another role: start it afresh.
+      if (await Location.hasStartedLocationUpdatesAsync(MEDIC_GPS)) await Location.stopLocationUpdatesAsync(MEDIC_GPS);
+      if (role === 'medic') {
+        onTaskFix = onPos;
+        // iOS has no time interval: fixes come as the GPS makes them, the heartbeat below thins them out.
+        await Location.startLocationUpdatesAsync(MEDIC_GPS, {
+          accuracy: Location.Accuracy.High, distanceInterval: 0, showsBackgroundLocationIndicator: true,
+          pausesUpdatesAutomatically: false, activityType: Location.ActivityType.Fitness,
+        });
+        gps.current = { remove: () => { onTaskFix = null; Location.stopLocationUpdatesAsync(MEDIC_GPS).catch(() => {}); } };
+        return true;
+      }
+    }
     gps.current ??= await Location.watchPositionAsync(
       role === 'medic'
         // a fix every 20 s even standing still (heartbeat), every 3 s while heading to an alert (guidance)
@@ -408,7 +431,8 @@ function MapScreen({ role, city, onSwitch }: { role: Role; city: City | null; on
   // Guidance needs fast fixes, the rest of the time a slow GPS saves battery: switch when a trip starts or ends.
   const tripping = !!going;
   useEffect(() => {
-    if (role !== 'medic' || !gps.current) return;
+    // iOS has no time interval to switch: its medic task keeps running as is.
+    if (role !== 'medic' || !gps.current || Platform.OS === 'ios') return;
     stopGps();
     startGps().catch(() => {});
   }, [tripping]);

@@ -17,6 +17,7 @@
     "expo-nearby-connections": "^1.1.1",
     "expo-notifications": "~58.1.7",
     "expo-status-bar": "~58.0.4",
+    "expo-task-manager": "~58.0.13",
     "expo-updates": "~58.0.20",
     "react": "19.3.0",
     "react-native": "0.88.1",

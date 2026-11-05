@@ -104,11 +104,12 @@
       [
         "expo-location",
         {
-          "locationWhenInUsePermission": "Brancard utilise ta position pour placer ton alerte. Elle est envoyée aux téléphones proches qui ont l'app (en continu si tu es medic), jamais à un serveur.",
-          "locationAlwaysAndWhenInUsePermission": "Brancard n'utilise ta position que quand l'app est ouverte, pour placer les alertes et, si tu es medic, te montrer aux autres.",
-          "locationAlwaysPermission": "Brancard n'utilise ta position que quand l'app est ouverte, pour placer les alertes et, si tu es medic, te montrer aux autres.",
+          "locationWhenInUsePermission": "Brancard utilise ta position pour placer ton alerte. Elle est envoyée aux téléphones proches qui ont l'app (en continu si tu es medic, même écran verrouillé), jamais à un serveur.",
+          "locationAlwaysAndWhenInUsePermission": "Brancard utilise ta position pour placer les alertes et, si tu es medic, te montrer aux autres, même écran verrouillé.",
+          "locationAlwaysPermission": "Brancard utilise ta position pour placer les alertes et, si tu es medic, te montrer aux autres, même écran verrouillé.",
           "locationFullAccuracyPermission": "Brancard a besoin de ta position précise pour que les medics trouvent la personne blessée.",
-          "motionUsagePermission": false
+          "motionUsagePermission": false,
+          "isIosBackgroundLocationEnabled": true
         }
       ],
       "@maplibre/maplibre-react-native"
