@@ -37,30 +37,20 @@ async function getJson(url: string, init?: RequestInit) {
   }
 }
 
-// Cities only (OSM city/town): no villages, districts or administrative areas. Nominatim can still
-// return one city twice; same-name results less than 15 km apart are merged. Real homonyms
-// (Saint-Denis 93 / La Réunion) stay.
-const RANK: Record<string, number> = { city: 0, town: 1 };
-
-/** Nominatim (OSM geocoder), France only. Called on submit, never per keystroke, as its usage policy requires. */
+/** French government geocoder, made for search-as-you-type (Nominatim's usage policy forbids it). Biggest communes first. */
 export async function searchCities(q: string): Promise<City[]> {
   const rows: any[] = await getJson(
-    'https://nominatim.openstreetmap.org/search?format=jsonv2&limit=10&accept-language=fr&countrycodes=fr&featureType=city&q=' +
-      encodeURIComponent(q.trim()),
-    { headers: { 'User-Agent': 'Brancard/1.0 (offline street-medic alerts)' } },
+    'https://geo.api.gouv.fr/communes?boost=population&limit=10&fields=nom,departement,bbox&nom=' + encodeURIComponent(q.trim()),
   );
-  const out: City[] = [];
-  for (const r of rows.filter((r) => r.addresstype in RANK).sort((a, b) => RANK[a.addresstype] - RANK[b.addresstype])) {
-    const [s, n, w, e] = (r.boundingbox as string[]).map(Number);
-    const c: City = { name: r.name || String(r.display_name).split(',')[0], label: String(r.display_name), bounds: clampBounds([w, s, e, n]) };
-    const [x, y] = center(c.bounds);
-    const dup = out.some((o) => {
-      const [ox, oy] = center(o.bounds);
-      return o.name === c.name && Math.hypot((x - ox) * Math.cos((y * Math.PI) / 180), y - oy) * 111 < 15;
-    });
-    if (!dup) out.push(c);
-  }
-  return out;
+  return rows.filter((r) => r.bbox).map((r) => {
+    const ring: [number, number][] = r.bbox.coordinates[0];
+    const xs = ring.map((p) => p[0]), ys = ring.map((p) => p[1]);
+    return {
+      name: r.nom,
+      label: r.departement ? `${r.nom}, ${r.departement.nom}` : r.nom,
+      bounds: clampBounds([Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)]),
+    };
+  });
 }
 
 /** Downloads the city's tiles (z10-14: vector tiles stop at z14 and overzoom) for offline use. */

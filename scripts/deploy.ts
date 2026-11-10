@@ -4,6 +4,7 @@
  *   bun scripts/deploy.ts               server + over-the-air update
  *   bun scripts/deploy.ts --apk         also build the APK and publish it on the download page
  *   bun scripts/deploy.ts --update-only only the over-the-air update (server untouched)
+ *   --ios                               the over-the-air update is for iPhones instead of Android (each has its own runtime)
  *   --light                             low memory: one worker, small JVM heap, no Gradle daemon (slower)
  *
  * Over-the-air update: `expo export` gives the JavaScript bundle and assets; the manifest is written and
@@ -64,12 +65,13 @@ const put = async (path: string, body: BodyInit, type = 'application/octet-strea
 };
 
 // 2. Over-the-air update
-const runtime = JSON.parse(run('bunx', ['expo-updates', 'runtimeversion:resolve', '--platform', 'android'], { capture: true })).runtimeVersion as string;
+const platform = process.argv.includes('--ios') ? 'ios' : 'android';
+const runtime = JSON.parse(run('bunx', ['expo-updates', 'runtimeversion:resolve', '--platform', platform], { capture: true })).runtimeVersion as string;
 rmSync(OUT, { recursive: true, force: true });
-run('bunx', ['expo', 'export', '--clear', '--platform', 'android', '--output-dir', OUT, ...(light ? ['--max-workers', '1'] : [])], { env: { ...process.env, NODE_ENV: 'production' } });
+run('bunx', ['expo', 'export', '--clear', '--platform', platform, '--output-dir', OUT, ...(light ? ['--max-workers', '1'] : [])], { env: { ...process.env, NODE_ENV: 'production' } });
 const expoClient = JSON.parse(run('bunx', ['expo', 'config', '--type', 'public', '--json'], { capture: true }));
 const TYPES: Record<string, string> = { hbc: 'application/javascript', js: 'application/javascript', json: 'application/json', ttf: 'font/ttf', otf: 'font/otf', png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', webp: 'image/webp', svg: 'image/svg+xml' };
-const meta = JSON.parse(readFileSync(join(OUT, 'metadata.json'), 'utf8')).fileMetadata.android as { bundle: string; assets: { path: string; ext: string }[] };
+const meta = JSON.parse(readFileSync(join(OUT, 'metadata.json'), 'utf8')).fileMetadata[platform] as { bundle: string; assets: { path: string; ext: string }[] };
 const files = [{ path: meta.bundle, ext: extname(meta.bundle).slice(1) }, ...meta.assets].map(({ path, ext }) => {
   if (!TYPES[ext]) { console.error(`No content type for .${ext}`); process.exit(1); }
   const bytes = readFileSync(join(OUT, path));
@@ -90,7 +92,7 @@ if (!verify('sha256', Buffer.from(manifest), cert.publicKey, Buffer.from(signatu
 }
 for (const f of files) await put(`/updates/assets/${f.hex}`, f.bytes);
 await put('/updates', JSON.stringify({ runtimeVersion: runtime, manifest, signature }), 'application/json');
-console.log(`Update published for runtime ${runtime.slice(0, 12)} (${files.length} files).`);
+console.log(`Update published for ${platform}, runtime ${runtime.slice(0, 12)} (${files.length} files).`);
 
 // 3. APK (only needed when native code changed, or for the download page)
 if (apk) {

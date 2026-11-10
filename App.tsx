@@ -8,7 +8,7 @@ import * as Notifications from 'expo-notifications';
 import * as TaskManager from 'expo-task-manager';
 import { StatusBar } from 'expo-status-bar';
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { ActivityIndicator, AppState, Image, BackHandler, Keyboard, KeyboardAvoidingView, Linking, Pressable, Platform, ScrollView, StyleSheet, Text, TextInput, useWindowDimensions, Vibration, View } from 'react-native';
+import { ActivityIndicator, AppState, Image, BackHandler, KeyboardAvoidingView, Linking, Pressable, Platform, ScrollView, StyleSheet, Text, TextInput, useWindowDimensions, Vibration, View } from 'react-native';
 import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
 import Manif from './modules/manif';
 import { TAGS } from './src/codec';
@@ -107,7 +107,7 @@ export default function App() {
   );
 }
 
-/** Search a city (Nominatim) then download its map. Full screen on first launch, in a modal from the map. */
+/** Search a city as you type, then download its map. Full screen on first launch, in a modal from the map. */
 function CityPicker({ onDone, onClose }: { onDone: (c: City | null) => void; onClose?: () => void }) {
   const insets = useSafeAreaInsets();
   const [q, setQ] = useState('');
@@ -117,21 +117,28 @@ function CityPicker({ onDone, onClose }: { onDone: (c: City | null) => void; onC
   const [offline, setOffline] = useState(false);
   const [dl, setDl] = useState<{ city: City; pct: number } | null>(null);
 
-  const search = async () => {
-    if (q.trim().length < 2 || busy) return;
-    Keyboard.dismiss();
-    setBusy(true);
+  // Searches once typing pauses; an answer for an older text is ignored.
+  useEffect(() => {
+    const text = q.trim();
     setErr(null);
-    try {
-      const r = await searchCities(q);
-      setResults(r);
-      if (!r.length) setErr('Aucune ville trouvée.');
-    } catch {
-      setErr('Pas de connexion. Il faut internet une fois pour télécharger la carte.');
-      setOffline(true);
-    }
-    setBusy(false);
-  };
+    if (text.length < 2) { setResults(null); setBusy(false); return; }
+    let live = true;
+    setBusy(true);
+    const timer = setTimeout(async () => {
+      try {
+        const r = await searchCities(text);
+        if (!live) return;
+        setResults(r);
+        if (!r.length) setErr('Aucune ville trouvée.');
+      } catch {
+        if (!live) return;
+        setErr('Pas de connexion. Il faut internet une fois pour télécharger la carte.');
+        setOffline(true);
+      }
+      setBusy(false);
+    }, 400);
+    return () => { live = false; clearTimeout(timer); };
+  }, [q]);
   const pick = async (c: City) => {
     setDl({ city: c, pct: 0 });
     setErr(null);
@@ -165,9 +172,9 @@ function CityPicker({ onDone, onClose }: { onDone: (c: City | null) => void; onC
       ) : (
         <>
           <View style={[s.row, { marginTop: 28 }]}>
-            <TextInput value={q} onChangeText={setQ} onSubmitEditing={search} returnKeyType="search" autoFocus={!onClose}
+            <TextInput value={q} onChangeText={setQ} returnKeyType="done" autoCorrect={false} autoFocus={!onClose}
               placeholder="Ville en France (ex : Lyon)" placeholderTextColor={C.muted} style={[s.input, { flex: 1, marginTop: 0 }]} />
-            <Btn icon="search" a11y="Chercher" color={C.blue} busy={busy} onPress={search} />
+            {busy && <ActivityIndicator color={C.blue} style={{ marginLeft: 12 }} accessibilityLabel="Recherche en cours" />}
           </View>
           <ScrollView style={{ marginTop: 16 }} keyboardShouldPersistTaps="handled">
             {results?.map((c) => (
